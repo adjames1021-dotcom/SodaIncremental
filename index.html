@@ -1,0 +1,1851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Soda Filler Diorama</title>
+
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+    body {
+      touch-action: none;               /* let our own code handle touch drags */
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    canvas { display: block; outline: none; }
+
+    /* The tiny hint at the bottom of the screen */
+    #hint {
+      position: fixed;
+      left: 50%;
+      bottom: max(26px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      font: 500 11px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      letter-spacing: 0.38em;
+      text-transform: lowercase;
+      color: rgba(236, 222, 198, 0.5);
+      opacity: 0;
+      transition: opacity 1.6s ease;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    #hint.show { opacity: 1; }
+    #hint.gone { opacity: 0; transition-duration: 2.4s; }
+
+    /* Shown only if Three.js can't be loaded (e.g. no internet connection) */
+    #error {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      text-align: center;
+      font: 14px/1.5 system-ui, sans-serif;
+      color: #b9aa94;
+    }
+    #error[hidden] { display: none; }
+  </style>
+
+  <!-- Tell the browser where "three" and its add-ons live (a CDN). No build step needed. -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+
+<body>
+  <div id="hint">pull the chain</div>
+  <div id="error" hidden></div>
+
+  <script>
+    // Safety net: if the 3D scene hasn't started after a few seconds, say why.
+    setTimeout(function () {
+      if (!window.__dioramaStarted) {
+        var el = document.getElementById('error');
+        el.textContent = 'The 3D scene could not start. It needs an internet connection (to load Three.js) and a browser with WebGL.';
+        el.hidden = false;
+      }
+    }, 9000);
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+    import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+    import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+    /* =====================================================================
+       0. SETTINGS & SMALL HELPERS
+       Numbers you can tweak to change sizes, speeds and timings.
+       ===================================================================== */
+
+    const deg = THREE.MathUtils.degToRad;
+    const lerp = THREE.MathUtils.lerp;
+    const clamp01 = (x) => Math.min(1, Math.max(0, x));
+
+    // Easing curves: take a value 0..1 and return a smoothed 0..1.
+    // They are what make movements start and stop gently instead of snapping.
+    const Ease = {
+      inOutSine: (t) => -(Math.cos(Math.PI * t) - 1) / 2,
+      outCubic: (t) => 1 - Math.pow(1 - t, 3),
+      inQuad: (t) => t * t,
+      outBack: (t) => {
+        const c1 = 1.70158, c3 = c1 + 1;
+        return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+      },
+      outBounce: (t) => {
+        const n = 7.5625, d = 2.75;
+        if (t < 1 / d) return n * t * t;
+        if (t < 2 / d) return n * (t -= 1.5 / d) * t + 0.75;
+        if (t < 2.5 / d) return n * (t -= 2.25 / d) * t + 0.9375;
+        return n * (t -= 2.625 / d) * t + 0.984375;
+      },
+    };
+
+    // Moves `current` smoothly toward `target`. Works the same at any frame rate.
+    function damp(current, target, speed, dt) {
+      return lerp(current, target, 1 - Math.exp(-speed * dt));
+    }
+
+    // The conveyor belt
+    const BELT = {
+      length: 6.8,                       // distance between the two rollers
+      angle: 0,                          // tilt of the belt (0 = flat)
+      width: 1.0,
+      rollerRadius: 0.18,
+      thickness: 0.025,
+      start: new THREE.Vector3(-3.4, 1.0, 0), // world position of the first roller
+      cruiseSpeed: 1.35,                 // units per second when running at full speed
+      textureTile: 0.32,                 // how long one repeat of the belt texture is
+    };
+    const BELT_TOP = BELT.rollerRadius + BELT.thickness; // height of the belt surface above the roller axles
+
+    // Distances along the belt (measured from the first roller)
+    const SPOT = {
+      canStart: 0.6,                     // where the empty can waits
+      fill: BELT.length / 2,             // where the filling nozzle is (the middle)
+      dropOff: BELT.length - 0.08,       // where the can tips off the end
+    };
+
+    // The soda can
+    const CAN = {
+      radius: 0.23,
+      height: 0.8,
+      levelMin: 0.12,                    // liquid height (inside the can) when it starts filling
+      levelMax: 0.6,                     // liquid height when full
+    };
+
+    // How long each step of the sequence takes (seconds)
+    const TIMING = {
+      toFill: 3.2,                       // ride from the start to the nozzle
+      pourDelay: 0.3,                    // pause before the nozzle opens
+      fillStart: 0.62,                   // liquid starts rising (stream has reached the can)
+      fillDuration: 3.4,                 // time to fill the can
+      beltRampUp: 0.9,                   // belt speeding up after capping
+      beltRampDown: 1.1,                 // belt slowing down after the can drops off
+    };
+
+    // The camera: a fixed 3/4 view looking down ~32 degrees, from far away with a
+    // narrow lens, so the machine sits small in a big empty black frame.
+    const CAMERA_SETUP = {
+      fov: 24,
+      distance: 29,
+      polar: deg(57.5),                  // angle from straight up (90 - 57.5 = 32.5 degrees downward tilt)
+      azimuth: deg(-30),                 // angle around the diorama (negative = from the front-left)
+      target: new THREE.Vector3(0.2, 1.25, 0.2),
+      orbitSide: deg(20),                // how far you can orbit left/right
+      orbitUp: deg(3),                   // ...and up/down
+    };
+
+    const FOG_DENSITY = 0.011;
+    const FOG_REFERENCE_DISTANCE = CAMERA_SETUP.distance; // fog is tuned for this camera distance
+
+    /* =====================================================================
+       1. RENDERER, SCENE AND CAMERA
+       ===================================================================== */
+
+    const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+    const pixelRatio = Math.min(window.devicePixelRatio, 2);
+    renderer.setPixelRatio(pixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;  // soft shadow edges
+    renderer.toneMapping = THREE.ACESFilmicToneMapping; // film-like handling of bright/dark
+    renderer.toneMappingExposure = 1.2;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.localClippingEnabled = true;               // used to keep the liquid surface level
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    scene.fog = new THREE.FogExp2(0x000000, FOG_DENSITY); // fades distant things into black
+
+    const camera = new THREE.PerspectiveCamera(CAMERA_SETUP.fov, window.innerWidth / window.innerHeight, 0.5, 200);
+    camera.position
+      .setFromSphericalCoords(CAMERA_SETUP.distance, CAMERA_SETUP.polar, CAMERA_SETUP.azimuth)
+      .add(CAMERA_SETUP.target);
+    camera.lookAt(CAMERA_SETUP.target);
+
+    /* =====================================================================
+       2. POST-PROCESSING (bloom = soft glow around bright lights)
+       ===================================================================== */
+
+    // Render into an HDR, multisampled (anti-aliased) target so bloom has bright values to work with.
+    const composerTarget = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
+    const composer = new EffectComposer(renderer, composerTarget);
+    composer.setPixelRatio(pixelRatio);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.75, 0.6, 0.9);
+    composer.addPass(bloomPass);
+    composer.addPass(new OutputPass()); // applies tone mapping + colour conversion at the end
+    composer.setSize(window.innerWidth, window.innerHeight);
+
+    /* =====================================================================
+       3. REFLECTIONS (a tiny dark "photo studio" for metals to reflect)
+       Metal looks black unless it has something to reflect. We build a dark
+       room with one warm soft-box and one cool strip, matching our lights.
+       ===================================================================== */
+
+    function buildEnvironmentMap() {
+      const envScene = new THREE.Scene();
+      envScene.add(new THREE.Mesh(
+        new THREE.BoxGeometry(20, 20, 20),
+        new THREE.MeshBasicMaterial({ color: 0x030303, side: THREE.BackSide })
+      ));
+      const panel = (w, h, color, strength, position) => {
+        const mesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(w, h),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(strength), side: THREE.DoubleSide })
+        );
+        mesh.position.copy(position);
+        mesh.lookAt(0, 0, 0);
+        envScene.add(mesh);
+      };
+      panel(5, 5, 0xffd2a0, 3.0, new THREE.Vector3(2.5, 8.5, 4.5));  // warm soft-box (like the key light)
+      panel(9, 1.2, 0x9cbcff, 1.2, new THREE.Vector3(5, 3.5, -8));   // cool strip behind (like the rim light)
+
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const texture = pmrem.fromScene(envScene, 0.04).texture;
+      pmrem.dispose();
+      return texture;
+    }
+    scene.environment = buildEnvironmentMap();
+
+    /* =====================================================================
+       4. LIGHTS
+       ===================================================================== */
+
+    // Very low fill light so the shadows aren't pure black
+    scene.add(new THREE.HemisphereLight(0x7d8fa8, 0x15100b, 0.1));
+
+    // Main warm spotlight from above, at an angle, casting soft shadows
+    const keyLight = new THREE.SpotLight(0xffc690, 340, 0, deg(30), 0.6, 2);
+    keyLight.position.set(2.4, 9.6, 4.4);
+    keyLight.target.position.set(0, 1.5, 0);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(2048, 2048);
+    keyLight.shadow.camera.near = 4;
+    keyLight.shadow.camera.far = 30;
+    keyLight.shadow.bias = -0.0003;
+    keyLight.shadow.normalBias = 0.02;
+    scene.add(keyLight, keyLight.target);
+
+    // Faint cool rim light from behind, to separate shapes from the black background
+    const rimLight = new THREE.SpotLight(0x8fb4ff, 50, 0, deg(40), 1.0, 2);
+    rimLight.position.set(4.5, 5.5, -7.5);
+    rimLight.target.position.set(0, 1.4, 0);
+    scene.add(rimLight, rimLight.target);
+
+    /* =====================================================================
+       5. PROCEDURAL TEXTURES (drawn with a 2D canvas, so no image files)
+       ===================================================================== */
+
+    function makeCanvas(w, h) {
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      return [canvas, canvas.getContext('2d')];
+    }
+
+    function toTexture(canvas, isColor = true) {
+      const texture = new THREE.CanvasTexture(canvas);
+      if (isColor) texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      return texture;
+    }
+
+    // Sprinkle random light/dark speckles over a canvas
+    function addGrain(g, w, h, amount) {
+      const img = g.getImageData(0, 0, w, h);
+      const d = img.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const n = (Math.random() - 0.5) * amount;
+        d[i] += n; d[i + 1] += n; d[i + 2] += n;
+      }
+      g.putImageData(img, 0, 0);
+    }
+
+    const rand = (a, b) => a + Math.random() * (b - a);
+
+    // Worn concrete for the floating slab
+    function makeConcreteTexture() {
+      const S = 512;
+      const [c, g] = makeCanvas(S, S);
+      g.fillStyle = '#5c5852';
+      g.fillRect(0, 0, S, S);
+      for (let i = 0; i < 140; i++) {           // soft stains
+        const x = rand(0, S), y = rand(0, S), r = rand(15, 120);
+        const dark = Math.random() < 0.6;
+        const grd = g.createRadialGradient(x, y, 0, x, y, r);
+        grd.addColorStop(0, dark ? 'rgba(20,16,12,0.13)' : 'rgba(255,235,210,0.06)');
+        grd.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = grd;
+        g.fillRect(x - r, y - r, r * 2, r * 2);
+      }
+      for (let i = 0; i < 90; i++) {            // scratches
+        g.strokeStyle = Math.random() < 0.5 ? 'rgba(255,245,230,0.07)' : 'rgba(0,0,0,0.2)';
+        g.lineWidth = rand(0.3, 1.4);
+        const x = rand(0, S), y = rand(0, S), a = rand(0, Math.PI), l = rand(10, 80);
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+        g.stroke();
+      }
+      for (let i = 0; i < 600; i++) {           // little pits
+        g.fillStyle = `rgba(0,0,0,${rand(0.15, 0.45)})`;
+        g.beginPath();
+        g.arc(rand(0, S), rand(0, S), rand(0.3, 1.8), 0, Math.PI * 2);
+        g.fill();
+      }
+      const edge = g.createRadialGradient(S / 2, S / 2, S * 0.3, S / 2, S / 2, S * 0.75); // grimy edges
+      edge.addColorStop(0, 'rgba(0,0,0,0)');
+      edge.addColorStop(1, 'rgba(0,0,0,0.4)');
+      g.fillStyle = edge;
+      g.fillRect(0, 0, S, S);
+      addGrain(g, S, S, 24);
+      return toTexture(c);
+    }
+
+    // Grime and chipped paint for painted steel parts
+    function makeGrimeTexture() {
+      const S = 256;
+      const [c, g] = makeCanvas(S, S);
+      g.fillStyle = '#dadada';
+      g.fillRect(0, 0, S, S);
+      for (let i = 0; i < 70; i++) {
+        const x = rand(0, S), y = rand(0, S), r = rand(5, 50);
+        const grd = g.createRadialGradient(x, y, 0, x, y, r);
+        grd.addColorStop(0, 'rgba(40,30,20,0.18)');
+        grd.addColorStop(1, 'rgba(40,30,20,0)');
+        g.fillStyle = grd;
+        g.fillRect(x - r, y - r, r * 2, r * 2);
+      }
+      for (let i = 0; i < 45; i++) {            // rusty drips
+        const x = rand(0, S), y = rand(0, S), l = rand(20, 90);
+        const grd = g.createLinearGradient(x, y, x, y + l);
+        grd.addColorStop(0, 'rgba(70,40,20,0.28)');
+        grd.addColorStop(1, 'rgba(70,40,20,0)');
+        g.fillStyle = grd;
+        g.fillRect(x, y, rand(1, 3), l);
+      }
+      for (let i = 0; i < 140; i++) {           // chips where bare metal shows
+        g.fillStyle = `rgba(255,255,255,${rand(0.15, 0.35)})`;
+        g.fillRect(rand(0, S), rand(0, S), rand(1, 4), rand(1, 3));
+      }
+      addGrain(g, S, S, 16);
+      return toTexture(c);
+    }
+
+    // Fine streaks for brushed metal (used as a roughness map)
+    function makeBrushedTexture() {
+      const S = 256;
+      const [c, g] = makeCanvas(S, S);
+      g.fillStyle = '#8c8c8c';
+      g.fillRect(0, 0, S, S);
+      for (let i = 0; i < 1800; i++) {
+        const v = Math.floor(rand(100, 220));
+        g.fillStyle = `rgba(${v},${v},${v},0.22)`;
+        g.fillRect(rand(0, S), rand(0, S), rand(20, 160), 1);
+      }
+      return toTexture(c, false);
+    }
+
+    // Ribbed black rubber for the belt. It repeats along the belt and scrolls when running.
+    function makeBeltTexture() {
+      const W = 128, H = 64;
+      const [c, g] = makeCanvas(W, H);
+      g.fillStyle = '#1d1d1d';
+      g.fillRect(0, 0, W, H);
+      for (let i = 0; i < 4; i++) {
+        const x = i * 32 + 8;
+        g.fillStyle = '#343434';
+        g.fillRect(x, 0, 5, H);
+        g.fillStyle = '#090909';
+        g.fillRect(x + 5, 0, 3, H);
+      }
+      addGrain(g, W, H, 18);
+      return toTexture(c);
+    }
+
+    // The soda can label: deep red, a cream wave and a little wordmark
+    function makeLabelTexture() {
+      const W = 512, H = 224;
+      const [c, g] = makeCanvas(W, H);
+      const grd = g.createLinearGradient(0, 0, 0, H);
+      grd.addColorStop(0, '#8a1118');
+      grd.addColorStop(0.5, '#c4232c');
+      grd.addColorStop(1, '#8a1118');
+      g.fillStyle = grd;
+      g.fillRect(0, 0, W, H);
+
+      // cream wave (two full waves so it wraps seamlessly around the can)
+      g.fillStyle = '#efe3cc';
+      g.beginPath();
+      for (let x = 0; x <= W; x += 4) {
+        const y = H * 0.6 + Math.sin((x / W) * Math.PI * 4) * 13;
+        if (x === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      for (let x = W; x >= 0; x -= 4) g.lineTo(x, H * 0.6 + 17 + Math.sin((x / W) * Math.PI * 4 + 0.6) * 13);
+      g.closePath();
+      g.fill();
+
+      // pinstripes near the top and bottom
+      g.fillStyle = 'rgba(30,5,5,0.55)';
+      g.fillRect(0, 9, W, 3);
+      g.fillRect(0, H - 12, W, 3);
+      g.fillStyle = 'rgba(255,240,220,0.8)';
+      g.fillRect(0, 15, W, 1.5);
+      g.fillRect(0, H - 17, W, 1.5);
+
+      // wordmark, twice around the can (drawn at x-W and x+W too so it wraps)
+      g.font = 'italic 900 58px Georgia, "Times New Roman", serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillStyle = '#f7efe0';
+      for (const x of [W * 0.08, W * 0.58]) {
+        for (const dx of [-W, 0, W]) g.fillText('Fizz', x + dx, H * 0.36);
+      }
+
+      // tiny bubbles
+      for (let i = 0; i < 46; i++) {
+        g.fillStyle = `rgba(255,235,220,${rand(0.15, 0.4)})`;
+        g.beginPath();
+        g.arc(rand(0, W), rand(H * 0.75, H * 0.9), rand(1, 3.2), 0, Math.PI * 2);
+        g.fill();
+      }
+      addGrain(g, W, H, 8);
+      return toTexture(c);
+    }
+
+    // Streaky texture that scrolls down the pouring stream
+    function makeStreamTexture() {
+      const W = 64, H = 256;
+      const [c, g] = makeCanvas(W, H);
+      g.fillStyle = '#e8e8e8';
+      g.fillRect(0, 0, W, H);
+      for (let i = 0; i < 60; i++) {
+        g.fillStyle = Math.random() < 0.5
+          ? `rgba(255,240,215,${rand(0.15, 0.4)})`
+          : `rgba(70,25,5,${rand(0.05, 0.35)})`;
+        g.fillRect(rand(0, W), 0, rand(1, 5), H);
+      }
+      for (let i = 0; i < 16; i++) {
+        g.fillStyle = `rgba(255,245,225,${rand(0.08, 0.2)})`;
+        g.fillRect(0, rand(0, H), W, rand(2, 7));
+      }
+      return toTexture(c);
+    }
+
+    // Liquid surface seen from above: dark soda in the middle, foam at the edge
+    function makeFoamTexture() {
+      const S = 128;
+      const [c, g] = makeCanvas(S, S);
+      const grd = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+      grd.addColorStop(0, '#3e1606');
+      grd.addColorStop(0.6, '#5c240b');
+      grd.addColorStop(0.84, '#8a4a22');
+      grd.addColorStop(0.95, '#c9a37a');
+      grd.addColorStop(1, '#dcc4a0');
+      g.fillStyle = grd;
+      g.fillRect(0, 0, S, S);
+      for (let i = 0; i < 170; i++) {
+        const a = rand(0, Math.PI * 2), r = rand(0.72, 0.98) * (S / 2);
+        g.fillStyle = `rgba(230,205,170,${rand(0.15, 0.4)})`;
+        g.beginPath();
+        g.arc(S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r, rand(0.6, 2.2), 0, Math.PI * 2);
+        g.fill();
+      }
+      return toTexture(c);
+    }
+
+    // A soft round dot (for splash droplets)
+    function makeDotTexture() {
+      const S = 64;
+      const [c, g] = makeCanvas(S, S);
+      const grd = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+      grd.addColorStop(0, 'rgba(255,255,255,1)');
+      grd.addColorStop(0.5, 'rgba(255,255,255,0.6)');
+      grd.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grd;
+      g.fillRect(0, 0, S, S);
+      return toTexture(c);
+    }
+
+    const TEX = {
+      concrete: makeConcreteTexture(),
+      grime: makeGrimeTexture(),
+      brushed: makeBrushedTexture(),
+      belt: makeBeltTexture(),
+      label: makeLabelTexture(),
+      stream: makeStreamTexture(),
+      foam: makeFoamTexture(),
+      dot: makeDotTexture(),
+    };
+    TEX.belt.repeat.set(BELT.length / BELT.textureTile, 1);
+    TEX.brushed.repeat.set(2, 2);
+
+    /* =====================================================================
+       6. MATERIALS
+       MeshStandardMaterial = physically based: "roughness" (shiny 0 .. matte 1)
+       and "metalness" (plastic/paint 0 .. metal 1).
+       ===================================================================== */
+
+    const MAT = {
+      concrete: new THREE.MeshStandardMaterial({ map: TEX.concrete, roughness: 0.93, metalness: 0.02 }),
+      paint: new THREE.MeshStandardMaterial({ color: 0x52625b, map: TEX.grime, roughness: 0.62, metalness: 0.35 }),
+      accent: new THREE.MeshStandardMaterial({ color: 0xb5832a, map: TEX.grime, roughness: 0.55, metalness: 0.3 }),
+      brushed: new THREE.MeshStandardMaterial({ color: 0xa4a7ab, roughnessMap: TEX.brushed, roughness: 0.75, metalness: 0.9 }),
+      darkSteel: new THREE.MeshStandardMaterial({ color: 0x2b2c2e, roughness: 0.48, metalness: 0.85 }),
+      chrome: new THREE.MeshStandardMaterial({ color: 0xdde2e6, roughness: 0.16, metalness: 1.0 }),
+      guide: new THREE.MeshStandardMaterial({ color: 0x8d9298, roughness: 0.38, metalness: 1.0 }),
+      brass: new THREE.MeshStandardMaterial({ color: 0xb89058, roughness: 0.32, metalness: 1.0 }),
+      rubber: new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.88, metalness: 0.0 }),
+      grip: new THREE.MeshStandardMaterial({ color: 0x161412, roughness: 0.7, metalness: 0.0 }),
+      belt: new THREE.MeshStandardMaterial({ map: TEX.belt, bumpMap: TEX.belt, bumpScale: 0.8, roughness: 0.86, metalness: 0.0 }),
+      hole: new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 1, metalness: 0 }),
+
+      // Can materials. Each can gets its own copies so it can fade on its own.
+      canAlu: new THREE.MeshStandardMaterial({ color: 0xc9ced3, roughness: 0.28, metalness: 1.0, transparent: true, side: THREE.DoubleSide }),
+      canLabel: new THREE.MeshStandardMaterial({ map: TEX.label, roughness: 0.32, metalness: 0.5, transparent: true }),
+      canLid: new THREE.MeshStandardMaterial({ color: 0xb9bec4, roughness: 0.55, metalness: 0.9, transparent: true }),
+      canInner: new THREE.MeshStandardMaterial({ color: 0x80848a, roughness: 0.5, metalness: 1.0, transparent: true, side: THREE.BackSide }),
+      liquid: new THREE.MeshStandardMaterial({ color: 0x7a3a12, roughness: 0.45, metalness: 0.0, emissive: 0x301204 }),
+      liquidSurface: new THREE.MeshStandardMaterial({ map: TEX.foam, roughness: 0.3, metalness: 0.0, emissive: 0x120601 }),
+      stream: new THREE.MeshStandardMaterial({
+        color: 0xa24a18, map: TEX.stream, roughness: 0.1, metalness: 0.0, emissive: 0x2e0e03,
+        transparent: true, opacity: 0.82, depthWrite: false,
+      }),
+    };
+
+    // Small helper so building meshes takes one line
+    function addMesh(geometry, material, parent, { x = 0, y = 0, z = 0, cast = true, receive = true } = {}) {
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = cast;
+      mesh.receiveShadow = receive;
+      parent.add(mesh);
+      return mesh;
+    }
+
+    // Makes a material fade to black below a certain height. Used for the supports,
+    // which run down into the void "forever" (they're very long and simply disappear).
+    function withDepthFade(material, fadeTop, fadeBottom) {
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.uFadeTop = { value: fadeTop };
+        shader.uniforms.uFadeBottom = { value: fadeBottom };
+        shader.vertexShader = shader.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying float vWorldY;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWorldY = (modelMatrix * vec4(transformed, 1.0)).y;');
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', '#include <common>\nvarying float vWorldY;\nuniform float uFadeTop;\nuniform float uFadeBottom;')
+          .replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.rgb *= smoothstep(uFadeBottom, uFadeTop, vWorldY);');
+      };
+      return material;
+    }
+    const fadingPaint = withDepthFade(MAT.paint.clone(), 0.7, -6.5);
+    const SUPPORT_DEPTH = 80; // how far down the supports go (far past what you can see)
+
+    /* =====================================================================
+       7. THE CONVEYOR BELT
+       Everything here lives in one group (tilted by BELT.angle, which is 0 = flat).
+       Inside that group: x runs along the belt (0 = start, BELT.length = the drop-off end),
+       y is "up" from the roller axles, z is across the belt.
+       ===================================================================== */
+
+    const conveyor = new THREE.Group();
+    conveyor.position.copy(BELT.start);
+    conveyor.rotation.z = BELT.angle;
+    scene.add(conveyor);
+
+    const rollers = []; // the spinning parts
+
+    {
+      const L = BELT.length, R = BELT.rollerRadius, W = BELT.width, T = BELT.thickness;
+
+      // Top run of the belt (this is where the texture scrolls)
+      addMesh(new THREE.BoxGeometry(L, T, W), MAT.belt, conveyor, { x: L / 2, y: R + T / 2 });
+      // Bottom return run
+      addMesh(new THREE.BoxGeometry(L, T, W), MAT.rubber, conveyor, { x: L / 2, y: -(R + T / 2) });
+      // Half-tubes where the belt wraps around each roller
+      const wrap = (x, thetaStart) => {
+        const geo = new THREE.CylinderGeometry(R + T, R + T, W, 28, 1, true, thetaStart, Math.PI);
+        geo.rotateX(Math.PI / 2);
+        addMesh(geo, MAT.rubber, conveyor, { x });
+      };
+      wrap(0, Math.PI);
+      wrap(L, 0);
+
+      // Rollers: a drum, an axle, and hub caps with a little arm so you can see them spin
+      const drumGeo = new THREE.CylinderGeometry(R, R, W + 0.04, 32).rotateX(Math.PI / 2);
+      const axleGeo = new THREE.CylinderGeometry(0.035, 0.035, W + 0.36, 12).rotateX(Math.PI / 2);
+      const hubGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.04, 6).rotateX(Math.PI / 2);
+      const armGeo = new THREE.BoxGeometry(0.17, 0.035, 0.015);
+      for (const x of [0, L]) {
+        const roller = new THREE.Group();
+        roller.position.x = x;
+        addMesh(drumGeo, MAT.brushed, roller);
+        addMesh(axleGeo, MAT.chrome, roller);
+        for (const side of [-1, 1]) {
+          addMesh(hubGeo, MAT.darkSteel, roller, { z: side * (W / 2 + 0.13) });
+          addMesh(armGeo, MAT.accent, roller, { z: side * (W / 2 + 0.157) });
+        }
+        conveyor.add(roller);
+        rollers.push(roller);
+      }
+
+      // Side rails (frame) along both edges
+      const railGeo = new THREE.BoxGeometry(L + 0.6, 0.36, 0.04);
+      for (const side of [-1, 1]) addMesh(railGeo, MAT.paint, conveyor, { x: L / 2, y: -0.02, z: side * 0.58 });
+
+      // Thin chrome guide bars that keep the cans in line
+      const guideY = BELT_TOP + 0.32, guideZ = CAN.radius + 0.1;
+      const guideStart = 0.25, guideEnd = L - 0.4;
+      const guideGeo = new THREE.CylinderGeometry(0.012, 0.012, guideEnd - guideStart, 8).rotateZ(Math.PI / 2);
+      const postGeo = new THREE.BoxGeometry(0.03, guideY - 0.14, 0.03);
+      const postArmGeo = new THREE.BoxGeometry(0.025, 0.025, 0.58 - guideZ);
+      for (const side of [-1, 1]) {
+        addMesh(guideGeo, MAT.guide, conveyor, { x: (guideStart + guideEnd) / 2, y: guideY, z: side * guideZ });
+        for (let s = guideStart + 0.3; s < guideEnd; s += 1.25) {
+          addMesh(postGeo, MAT.darkSteel, conveyor, { x: s, y: 0.14 + (guideY - 0.14) / 2, z: side * 0.58 });
+          addMesh(postArmGeo, MAT.darkSteel, conveyor, { x: s, y: guideY, z: side * (guideZ + (0.58 - guideZ) / 2) });
+        }
+      }
+
+      // Motor that drives the first roller (on the back side)
+      const motor = new THREE.Group();
+      motor.position.set(0, -0.02, -0.92);
+      addMesh(new THREE.CylinderGeometry(0.2, 0.2, 0.44, 28).rotateX(Math.PI / 2), MAT.paint, motor);
+      addMesh(new THREE.CylinderGeometry(0.21, 0.21, 0.04, 28).rotateX(Math.PI / 2), MAT.darkSteel, motor, { z: -0.23 });
+      const finGeo = new THREE.BoxGeometry(0.44, 0.02, 0.36);
+      for (let i = 0; i < 6; i++) {
+        const fin = addMesh(finGeo, MAT.paint, motor);
+        fin.rotation.z = (i / 6) * Math.PI;
+        fin.scale.set(0.98, 1, 1);
+      }
+      addMesh(new RoundedBoxGeometry(0.2, 0.12, 0.16, 2, 0.02), MAT.darkSteel, motor, { y: 0.22 }); // junction box
+      conveyor.add(motor);
+    }
+
+    // Supports: legs that run straight down into the darkness and fade away
+    conveyor.updateMatrixWorld(true);
+    {
+      const legGeo = new THREE.BoxGeometry(0.08, SUPPORT_DEPTH, 0.08);
+      const braceGeo = new THREE.BoxGeometry(0.05, 0.05, 1.16);
+      for (const s of [0.6, BELT.length - 0.6]) {
+        let top;
+        for (const side of [-1, 1]) {
+          top = conveyor.localToWorld(new THREE.Vector3(s, -0.2, side * 0.58));
+          addMesh(legGeo, fadingPaint, scene, { x: top.x, y: top.y - SUPPORT_DEPTH / 2, z: top.z });
+        }
+        // cross braces every so often, disappearing with the legs
+        for (let y = top.y - 0.9; y > -10; y -= 2.4) addMesh(braceGeo, fadingPaint, scene, { x: top.x, y });
+      }
+    }
+
+    // Called every frame: scroll the belt texture and spin the rollers at `speed`
+    function updateConveyor(speed, dt) {
+      TEX.belt.offset.x -= (speed * dt) / BELT.textureTile;
+      for (const roller of rollers) roller.rotation.z -= (speed * dt) / BELT.rollerRadius;
+    }
+
+    /* =====================================================================
+       8. THE FILLING STATION (column, arm, housing, nozzle, indicator lamp)
+       ===================================================================== */
+
+    // Work out where things go, based on where a can stands under the nozzle
+    const STATION = (() => {
+      const base = conveyor.localToWorld(new THREE.Vector3(SPOT.fill, BELT_TOP, 0)); // can's base point
+      const canUp = new THREE.Vector3(-Math.sin(BELT.angle), Math.cos(BELT.angle), 0); // cans tilt with the belt
+      const opening = base.clone().addScaledVector(canUp, CAN.height);                  // centre of the can's top
+      const nozzleLength = 0.24;
+      const nozzleTip = new THREE.Vector3(opening.x, opening.y + 0.3, 0);
+      const housingBottom = nozzleTip.y + nozzleLength;
+      const housingSize = new THREE.Vector3(0.66, 0.5, 0.58);
+      const housingCenter = new THREE.Vector3(opening.x, housingBottom + housingSize.y / 2, 0);
+      const armY = housingBottom + housingSize.y + 0.09;
+      return { x: opening.x, opening, nozzleTip, nozzleLength, housingBottom, housingSize, housingCenter, armY };
+    })();
+
+    const station = new THREE.Group();
+    scene.add(station);
+
+    let nozzleSpout;           // moves up/down a little while pouring
+    let lampMaterial, lampLight;
+
+    {
+      const { x, armY, housingCenter: hc, housingSize: hs, housingBottom, nozzleLength } = STATION;
+
+      // Column behind the belt, and an arm reaching over it
+      const columnTop = armY + 0.09;
+      addMesh(new THREE.BoxGeometry(0.24, columnTop + SUPPORT_DEPTH, 0.24), fadingPaint, station,
+        { x, y: (columnTop - SUPPORT_DEPTH) / 2, z: -1.0 });
+      addMesh(new THREE.BoxGeometry(0.2, 0.18, 1.22), MAT.paint, station, { x, y: armY, z: -0.45 });
+      const gusset = addMesh(new THREE.BoxGeometry(0.06, 0.06, 0.42), MAT.paint, station, { x, y: armY - 0.18, z: -0.78 });
+      gusset.rotation.x = deg(-45);
+
+      // Housing
+      addMesh(new RoundedBoxGeometry(hs.x, hs.y, hs.z, 3, 0.04), MAT.paint, station, { x: hc.x, y: hc.y, z: hc.z });
+      const front = hc.z + hs.z / 2;
+      addMesh(new THREE.BoxGeometry(0.24, 0.07, 0.008), MAT.accent, station, { x: x + 0.12, y: hc.y + 0.11, z: front + 0.004 });
+      const ventGeo = new THREE.BoxGeometry(0.34, 0.012, 0.008);
+      for (let i = 0; i < 4; i++) addMesh(ventGeo, MAT.hole, station, { x: x + 0.04, y: hc.y - 0.06 - i * 0.04, z: front + 0.002, cast: false });
+      const screwGeo = new THREE.CylinderGeometry(0.012, 0.012, 0.01, 8).rotateX(Math.PI / 2);
+      for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+        addMesh(screwGeo, MAT.darkSteel, station, { x: x + sx * 0.28, y: hc.y + sy * 0.2, z: front + 0.004, cast: false });
+      }
+
+      // Nozzle: a fixed collar plus a spout that can slide a little
+      addMesh(new THREE.CylinderGeometry(0.075, 0.085, 0.06, 24), MAT.darkSteel, station, { x, y: housingBottom - 0.03 });
+      const spoutGroup = new THREE.Group();
+      spoutGroup.position.set(x, housingBottom, 0);
+      const spoutLength = nozzleLength + 0.04;
+      addMesh(new THREE.CylinderGeometry(0.042, 0.028, spoutLength, 20), MAT.chrome, spoutGroup, { y: 0.04 - spoutLength / 2 });
+      addMesh(new THREE.TorusGeometry(0.029, 0.006, 6, 20).rotateX(Math.PI / 2), MAT.chrome, spoutGroup, { y: -nozzleLength });
+      station.add(spoutGroup);
+      nozzleSpout = spoutGroup;
+
+      // Indicator lamp on the front of the housing
+      const lx = x - 0.17, ly = hc.y + 0.1;
+      addMesh(new THREE.CylinderGeometry(0.07, 0.07, 0.035, 24).rotateX(Math.PI / 2), MAT.darkSteel, station, { x: lx, y: ly, z: front + 0.0175 });
+      lampMaterial = new THREE.MeshStandardMaterial({
+        color: 0x3a1a06, emissive: 0xff8c2e, emissiveIntensity: 0.03, roughness: 0.25, metalness: 0,
+      });
+      addMesh(new THREE.SphereGeometry(0.05, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI / 2), lampMaterial, station,
+        { x: lx, y: ly, z: front + 0.034, cast: false });
+      lampLight = new THREE.PointLight(0xff9a40, 0, 3, 2);
+      lampLight.position.set(lx, ly, front + 0.16);
+      station.add(lampLight);
+    }
+
+    /* =====================================================================
+       9. THE PULL CHAIN
+       Hangs from a small switch box beside the housing. You drag the handle
+       down; a spring pulls it back up with a little bounce; a tug past
+       `triggerAt` "clicks" the switch and starts the machine.
+       ===================================================================== */
+
+    // Where the chain comes out of the switch box
+    const CHAIN_TOP = new THREE.Vector3(STATION.x + 0.62, STATION.housingCenter.y - 0.06, 0.92);
+    let powerLedMaterial;
+
+    // Switch box and the bracket that holds it
+    {
+      const boxCenter = CHAIN_TOP.clone().add(new THREE.Vector3(0, 0.1, 0));
+      addMesh(new RoundedBoxGeometry(0.18, 0.2, 0.18, 2, 0.025), MAT.paint, station, { x: boxCenter.x, y: boxCenter.y, z: boxCenter.z });
+      addMesh(new THREE.TorusGeometry(0.022, 0.008, 6, 16).rotateX(Math.PI / 2), MAT.darkSteel, station, { x: CHAIN_TOP.x, y: CHAIN_TOP.y, z: CHAIN_TOP.z });
+      powerLedMaterial = new THREE.MeshStandardMaterial({ color: 0x0b2a12, emissive: 0x4dff7a, emissiveIntensity: 2.2 });
+      addMesh(new THREE.SphereGeometry(0.014, 12, 8), powerLedMaterial, station, { x: boxCenter.x, y: boxCenter.y + 0.05, z: boxCenter.z + 0.092, cast: false });
+
+      const from = new THREE.Vector3(STATION.x + 0.3, STATION.housingCenter.y + 0.04, 0.1);
+      const to = boxCenter.clone().add(new THREE.Vector3(-0.05, 0.02, 0));
+      const bracket = addMesh(new THREE.BoxGeometry(0.05, 0.05, from.distanceTo(to)), MAT.darkSteel, station);
+      bracket.position.copy(from).lerp(to, 0.5);
+      bracket.lookAt(to);
+    }
+
+    class PullChain {
+      constructor(anchor) {
+        this.restLength = 1.45;              // length of chain below the switch box
+        this.pitch = 0.072;                  // spacing between links
+        this.maxPull = 0.72;                 // how far down it can be pulled
+        this.triggerAt = 0.28;               // pulling past this "clicks" the switch
+        this.k = 140;                        // spring stiffness
+        this.c = 7.5;                        // spring damping (lower = bouncier)
+
+        this.d = 0;           // current pull distance (0 = at rest, positive = pulled down)
+        this.v = 0;           // speed of d
+        this.lastV = 0;
+        this.dragging = false;
+        this.dragTarget = 0;
+        this.tripped = false;
+        this.onTug = null;    // set later: what happens when the switch clicks
+
+        // Gentle swinging (two small angles: side-to-side, and toward/away from the camera)
+        this.swayA = 0; this.swayAV = 0; this.swayTarget = 0;
+        this.swayB = 0; this.swayBV = 0;
+        // Axes for the swing, based on the starting camera direction
+        this.faceAxis = new THREE.Vector3().subVectors(camera.position, anchor).setY(0).normalize();
+        this.sideAxis = new THREE.Vector3(0, 1, 0).cross(this.faceAxis).normalize();
+        this._qa = new THREE.Quaternion();
+        this._qb = new THREE.Quaternion();
+
+        this.group = new THREE.Group();
+        this.group.position.copy(anchor);
+        scene.add(this.group);
+
+        // Links: oval rings, every other one turned 90 degrees
+        const linkGeo = new THREE.TorusGeometry(0.026, 0.0072, 6, 16).scale(1, 1.65, 1);
+        const count = Math.ceil((this.restLength + 0.3) / this.pitch) + 2;
+        this.links = [];
+        for (let i = 0; i < count; i++) {
+          const link = addMesh(linkGeo, MAT.brass, this.group, { receive: false });
+          link.rotation.y = (i % 2) * (Math.PI / 2);
+          this.links.push(link);
+        }
+
+        // Handle: ring, brass caps and a black rubber grip
+        this.handle = new THREE.Group();
+        addMesh(new THREE.TorusGeometry(0.03, 0.008, 6, 16).scale(1, 1.3, 1), MAT.brass, this.handle, { y: -0.025 });
+        addMesh(new THREE.CylinderGeometry(0.022, 0.05, 0.05, 20), MAT.brass, this.handle, { y: -0.075 });
+        addMesh(new THREE.CylinderGeometry(0.045, 0.05, 0.2, 20), MAT.grip, this.handle, { y: -0.2 });
+        const groove = new THREE.TorusGeometry(0.047, 0.005, 6, 20).rotateX(Math.PI / 2);
+        for (const y of [-0.15, -0.2, -0.25]) addMesh(groove, MAT.grip, this.handle, { y });
+        addMesh(new THREE.CylinderGeometry(0.056, 0.05, 0.03, 20), MAT.brass, this.handle, { y: -0.315 });
+        addMesh(new THREE.SphereGeometry(0.03, 16, 10), MAT.brass, this.handle, { y: -0.335 });
+        this.group.add(this.handle);
+
+        // An invisible, generous grab zone around the handle (the handle itself is tiny on screen)
+        this.hitArea = new THREE.Mesh(
+          new THREE.CapsuleGeometry(0.26, 0.5, 4, 8),
+          new THREE.MeshBasicMaterial({ visible: false })
+        );
+        this.hitArea.position.y = -0.12;
+        this.handle.add(this.hitArea);
+
+        this.dragPlane = new THREE.Plane();
+        this.grabPoint = new THREE.Vector3();
+        this._hit = new THREE.Vector3();
+        this._tmp = new THREE.Vector3();
+        this.layout(0);
+      }
+
+      beginDrag(ray) {
+        // We drag on an invisible vertical sheet that faces the camera
+        const normal = this._tmp.subVectors(camera.position, this.group.position).setY(0).normalize();
+        this.dragPlane.setFromNormalAndCoplanarPoint(normal, this.handle.getWorldPosition(this._hit));
+        if (!ray.intersectPlane(this.dragPlane, this.grabPoint)) this.grabPoint.copy(this._hit);
+        this.dragStartD = this.d;
+        this.dragTarget = this.d;
+        this.dragging = true;
+        Sound.clink(0.55);
+      }
+
+      drag(ray) {
+        if (!ray.intersectPlane(this.dragPlane, this._hit)) return;
+        const raw = this.dragStartD + (this.grabPoint.y - this._hit.y);
+        // Easy at first, then it resists more and more (never past maxPull)
+        this.dragTarget = raw >= 0
+          ? this.maxPull * (1 - Math.exp(-raw / this.maxPull))
+          : Math.max(raw * 0.25, -0.06);
+        const sideways = this._tmp.subVectors(this._hit, this.grabPoint).dot(this.sideAxis);
+        this.swayTarget = THREE.MathUtils.clamp(sideways * 0.35, -0.28, 0.28);
+      }
+
+      endDrag() {
+        if (!this.dragging) return;
+        this.dragging = false;
+        this.swayTarget = 0;
+        this.swayBV += (Math.random() - 0.5) * 0.9;   // a little random swing when you let go
+        this.swayAV += (Math.random() - 0.5) * 0.5;
+        Sound.clink(0.4 + Math.min(0.6, Math.abs(this.v) * 0.25));
+      }
+
+      update(dt, time) {
+        const prevD = this.d;
+        if (this.dragging) {
+          // Follow the pointer (with a tiny bit of lag so it feels weighty)
+          this.d = damp(this.d, this.dragTarget, 28, dt);
+          this.v = dt > 0 ? (this.d - prevD) / dt : 0;
+        } else {
+          // Spring back to rest. Small sub-steps keep the simulation stable.
+          const steps = 4, h = dt / steps;
+          for (let i = 0; i < steps; i++) {
+            const accel = -this.k * this.d - this.c * this.v;
+            this.v += accel * h;
+            this.d += this.v * h;
+          }
+          if (this.d < -0.16) { this.d = -0.16; this.v = Math.max(this.v, 0); }
+          // A little rattle at the top of the bounce
+          if (this.lastV < -0.05 && this.v >= 0 && this.d < -0.02) Sound.clink(0.3);
+        }
+        this.lastV = this.v;
+
+        // The switch clicks when you pull past triggerAt
+        if (this.dragging && !this.tripped && this.d > this.triggerAt) {
+          this.tripped = true;
+          if (this.onTug) this.onTug();
+        }
+        if (this.tripped && this.d < 0.06) this.tripped = false;
+
+        // Swing (a damped pendulum)
+        const stiffness = 9, friction = 0.9;
+        if (this.dragging) {
+          const prevA = this.swayA;
+          this.swayA = damp(this.swayA, this.swayTarget, 10, dt);
+          this.swayAV = dt > 0 ? (this.swayA - prevA) / dt : 0;
+        } else {
+          this.swayAV += (-stiffness * this.swayA - friction * this.swayAV) * dt;
+          this.swayA += this.swayAV * dt;
+        }
+        this.swayBV += (-stiffness * this.swayB - friction * this.swayBV) * dt;
+        this.swayB += this.swayBV * dt;
+        const idle = Math.sin(time * 0.9) * 0.006; // barely-there breathing motion
+        this._qa.setFromAxisAngle(this.faceAxis, this.swayA + idle);
+        this._qb.setFromAxisAngle(this.sideAxis, this.swayB);
+        this.group.quaternion.multiplyQuaternions(this._qa, this._qb);
+
+        this.layout(this.d);
+      }
+
+      // Place the links between the switch box and the handle
+      layout(d) {
+        const total = this.restLength + d;
+        const stretch = 1 + Math.max(0, d) * 0.16;  // links spread apart a little when pulled
+        for (let i = 0; i < this.links.length; i++) {
+          const dist = total - (i + 0.5) * this.pitch * stretch;
+          const link = this.links[i];
+          link.visible = dist > 0.02;                // links above this are "inside" the switch box
+          link.position.y = -dist;
+        }
+        this.handle.position.y = -total;
+      }
+    }
+
+    /* =====================================================================
+       10. SODA CANS
+       ===================================================================== */
+
+    // Shapes shared by every can (made once). Heights are measured from the can's base.
+    const CAN_GEO = (() => {
+      const r = CAN.radius;
+      return {
+        bottomRing: new THREE.CylinderGeometry(r, 0.175, 0.06, 40, 1, true).translate(0, 0.03, 0),
+        bottomCap: new THREE.CircleGeometry(0.175, 32).rotateX(Math.PI / 2).translate(0, 0.003, 0),
+        body: new THREE.CylinderGeometry(r, r, 0.62, 48, 1, true).translate(0, 0.37, 0),        // the label part
+        shoulder: new THREE.CylinderGeometry(0.185, r, 0.09, 48, 1, true).translate(0, 0.725, 0),
+        neck: new THREE.CylinderGeometry(0.185, 0.185, 0.03, 48, 1, true).translate(0, 0.785, 0),
+        rim: new THREE.TorusGeometry(0.185, 0.011, 8, 48).rotateX(Math.PI / 2).translate(0, 0.8, 0),
+        inner: new THREE.CylinderGeometry(0.219, 0.219, 0.62, 32, 1, true).translate(0, 0.37, 0), // inside wall
+        innerBottom: new THREE.CircleGeometry(0.219, 32).rotateX(Math.PI / 2).translate(0, 0.065, 0), // faces down: drawn with the back-side inner material
+        liquid: new THREE.CylinderGeometry(0.213, 0.213, 0.6, 32).translate(0, 0.37, 0),
+        surface: new THREE.CircleGeometry(0.213, 40).rotateX(-Math.PI / 2),
+        lid: new THREE.CylinderGeometry(0.19, 0.19, 0.016, 40).translate(0, 0.008, 0),
+        lidRing: new THREE.TorusGeometry(0.168, 0.007, 6, 40).rotateX(Math.PI / 2).translate(0, 0.017, 0),
+        tab: new RoundedBoxGeometry(0.11, 0.008, 0.055, 2, 0.003).translate(0.035, 0.021, 0),
+        rivet: new THREE.CylinderGeometry(0.012, 0.012, 0.01, 12).translate(0, 0.02, 0),
+      };
+    })();
+
+    const cans = [];
+    const _v = new THREE.Vector3();
+
+    class Can {
+      constructor() {
+        this.s = SPOT.canStart;  // position along the belt
+        this.fill = 0;           // 0 = empty .. 1 = full
+        this.xray = 0;           // 0 = solid label .. 1 = see-through label (so you can watch it fill)
+        this.opacity = 1;        // overall fade (appearing / falling away)
+        this.squash = 0;         // a little squish when the lid lands
+        this.dropY = 0;          // extra height while dropping onto the belt
+        this.state = 'belt';     // 'belt' = riding the conveyor, 'falling' = off the end
+        this.appearing = false;
+        this.lidOn = false;
+
+        // Own copies of the materials, so this can fades without affecting others
+        this.mat = {
+          alu: MAT.canAlu.clone(),
+          lid: MAT.canLid.clone(),
+          label: MAT.canLabel.clone(),
+          inner: MAT.canInner.clone(),
+          liquid: MAT.liquid.clone(),
+          surface: MAT.liquidSurface.clone(),
+        };
+        // The liquid is a full-height cylinder cut off by a flat, level plane at the fill height.
+        // That keeps the surface level even if the belt (and so the can) is tilted.
+        this.levelPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+        this.mat.liquid.clippingPlanes = [this.levelPlane];
+
+        this.group = new THREE.Group(); // moves along the belt
+        this.body = new THREE.Group();  // squashes
+        this.group.add(this.body);
+
+        const G = CAN_GEO, m = this.mat, b = this.body;
+        // renderOrder: draw the inside first, then the see-through label on top
+        const part = (geo, mat, order, cast = true) => {
+          const mesh = addMesh(geo, mat, b, { cast });
+          mesh.renderOrder = order;
+          return mesh;
+        };
+        part(G.inner, m.inner, 1, false);
+        part(G.innerBottom, m.inner, 1, false);
+        part(G.bottomRing, m.alu, 2);
+        part(G.bottomCap, m.alu, 2);
+        part(G.shoulder, m.alu, 2);
+        part(G.neck, m.alu, 2);
+        part(G.rim, m.alu, 2);
+        part(G.body, m.label, 3);
+
+        // Liquid (hidden until pouring starts)
+        this.liquid = new THREE.Group();
+        b.add(this.liquid);
+        addMesh(G.liquid, m.liquid, this.liquid, { cast: false });
+        // The surface disc is turned back to be level with the world (undoing the belt tilt),
+        // and stretched to match, because a level slice through a tilted can is an oval.
+        this.surface = new THREE.Group();
+        this.surface.rotation.z = -BELT.angle;
+        this.liquid.add(this.surface);
+        const disc = addMesh(G.surface, m.surface, this.surface, { cast: false });
+        disc.scale.x = 1 / Math.cos(BELT.angle);
+        this.liquid.visible = false;
+
+        // Lid (hidden until it pops on)
+        this.lid = new THREE.Group();
+        for (const geo of [G.lid, G.lidRing, G.tab, G.rivet]) addMesh(geo, m.lid, this.lid);
+        this.lid.position.y = CAN.height - 0.004;
+        this.lid.visible = false;
+        b.add(this.lid);
+
+        conveyor.add(this.group);
+        cans.push(this);
+        this.place();
+      }
+
+      get levelLocal() { return lerp(CAN.levelMin, CAN.levelMax, this.fill); }
+
+      // World height of the liquid surface (where the pouring stream should end)
+      levelWorldY() {
+        return this.body.localToWorld(_v.set(0, this.levelLocal, 0)).y;
+      }
+
+      place() {
+        if (this.state === 'belt') this.group.position.set(this.s, BELT_TOP + this.dropY, 0);
+      }
+
+      // Drop in from above with a little bounce
+      appear() {
+        this.appearing = true;
+        this.appearT = 0;
+        this.bounces = 0;
+        this.dropY = 0.6;
+        this.opacity = 0;
+      }
+
+      // Leave the belt and tumble into the void
+      startFall(speed) {
+        this.state = 'falling';
+        this.fallT = 0;
+        scene.attach(this.group); // keep its world position, but stop following the conveyor
+        this.velocity = new THREE.Vector3(Math.cos(BELT.angle), Math.sin(BELT.angle), 0)
+          .multiplyScalar(Math.max(speed, 0.9))
+          .add(new THREE.Vector3(0, 0.35, 0));
+        this.spin = new THREE.Vector3(rand(-0.4, 0.4), rand(-0.6, 0.6), rand(-3.6, -2.6));
+      }
+
+      update(dt) {
+        if (this.state === 'falling') {
+          this.fallT += dt;
+          this.velocity.y -= 9.5 * dt; // gravity
+          this.group.position.addScaledVector(this.velocity, dt);
+          this.group.rotation.x += this.spin.x * dt;
+          this.group.rotation.y += this.spin.y * dt;
+          this.group.rotation.z += this.spin.z * dt;
+          this.opacity = 1 - Ease.inQuad(clamp01(this.fallT / 1.5));
+          if (this.fallT > 1.7) { this.dispose(); return; }
+        }
+
+        if (this.appearing) {
+          this.appearT += dt;
+          const k = clamp01(this.appearT / 0.95);
+          this.dropY = 0.6 * (1 - Ease.outBounce(k));
+          this.opacity = Ease.outCubic(clamp01(this.appearT / 0.35));
+          const impacts = [1 / 2.75, 2 / 2.75, 2.5 / 2.75]; // moments the bounce touches down
+          if (this.bounces < impacts.length && k >= impacts[this.bounces]) {
+            Sound.tock(this.bounces === 0 ? 1 : 0.3 / this.bounces);
+            if (this.bounces === 0) this.squash = 0.5;
+            this.bounces++;
+          }
+          if (k >= 1) { this.appearing = false; this.dropY = 0; this.opacity = 1; }
+        }
+
+        this.place();
+
+        // Squash and recover
+        this.squash = damp(this.squash, 0, 9, dt);
+        const sq = this.squash;
+        this.body.scale.set(1 + 0.03 * sq, 1 - 0.06 * sq, 1 + 0.03 * sq);
+
+        // Liquid: only drawn while it can be seen
+        const showLiquid = this.fill > 0.001 && !(this.lidOn && this.xray < 0.001) && this.state === 'belt';
+        this.liquid.visible = showLiquid;
+        if (showLiquid) {
+          this.surface.position.y = this.levelLocal;
+          this.levelPlane.constant = this.surface.getWorldPosition(_v).y + 0.002;
+        }
+
+        // Fades
+        const o = this.opacity;
+        this.mat.alu.opacity = o;
+        this.mat.lid.opacity = o;
+        this.mat.inner.opacity = o;
+        this.mat.label.opacity = o * (1 - 0.8 * this.xray);
+      }
+
+      dispose() {
+        this.group.removeFromParent();
+        for (const mat of Object.values(this.mat)) mat.dispose();
+        cans.splice(cans.indexOf(this), 1);
+      }
+    }
+
+    /* =====================================================================
+       11. THE POURING STREAM AND SPLASHES
+       ===================================================================== */
+
+    const stream = {
+      // A thin cylinder whose origin is at the top, so stretching it grows it downward
+      mesh: new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.032, 1, 14, 4, true).translate(0, -0.5, 0), MAT.stream),
+      phase: 'off',   // 'falling' (front of the stream dropping) | 'flowing' | 'ending' (tail dropping) | 'off'
+      t: 0,
+      hitting: false, // is liquid currently landing in the can?
+
+      start() { this.phase = 'falling'; this.t = 0; },
+      stop() { if (this.phase !== 'off') { this.phase = 'ending'; this.t = 0; } },
+
+      update(dt, time, tipY, surfaceY) {
+        this.t += dt;
+        const gravity = 7;
+        const fallen = 0.5 * gravity * this.t * this.t;
+        let top = tipY + 0.01, bottom = surfaceY;
+        if (this.phase === 'falling') {
+          bottom = Math.max(surfaceY, tipY - fallen);
+          if (bottom <= surfaceY) this.phase = 'flowing';
+        } else if (this.phase === 'ending') {
+          top = tipY - fallen;
+          if (top <= surfaceY) this.phase = 'off';
+        }
+        this.hitting = this.phase === 'flowing' || this.phase === 'ending';
+        const length = top - bottom;
+        this.mesh.visible = this.phase !== 'off' && length > 0.003;
+        if (this.mesh.visible) {
+          const wobble = 1 + Math.sin(time * 37) * 0.05 + Math.sin(time * 23) * 0.04;
+          this.mesh.position.set(STATION.x, top, STATION.nozzleTip.z);
+          this.mesh.scale.set(wobble, length, wobble);
+        }
+        TEX.stream.offset.y += dt * 2.4; // makes the stream look like it's flowing
+      },
+    };
+    stream.mesh.visible = false;
+    scene.add(stream.mesh);
+
+    // Little droplets that jump up where the stream hits the liquid
+    const splash = (() => {
+      const COUNT = 48;
+      const positions = new Float32Array(COUNT * 3).fill(-100);
+      const velocity = new Float32Array(COUNT * 3);
+      const life = new Float32Array(COUNT);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      const points = new THREE.Points(geo, new THREE.PointsMaterial({
+        color: 0xd9925a, map: TEX.dot, size: 0.028, transparent: true, opacity: 0.85, depthWrite: false,
+      }));
+      points.frustumCulled = false;
+      scene.add(points);
+      let next = 0, emitTimer = 0;
+
+      return {
+        update(dt, emitting, x, y, z) {
+          if (emitting) {
+            emitTimer += dt;
+            while (emitTimer > 0.012) {
+              emitTimer -= 0.012;
+              const i = next++ % COUNT;
+              positions.set([x + rand(-0.02, 0.02), y, z + rand(-0.02, 0.02)], i * 3);
+              velocity.set([rand(-0.35, 0.35), rand(0.4, 0.9), rand(-0.35, 0.35)], i * 3);
+              life[i] = rand(0.2, 0.4);
+            }
+          }
+          for (let i = 0; i < COUNT; i++) {
+            if (life[i] <= 0) continue;
+            life[i] -= dt;
+            velocity[i * 3 + 1] -= 7 * dt;
+            positions[i * 3] += velocity[i * 3] * dt;
+            positions[i * 3 + 1] += velocity[i * 3 + 1] * dt;
+            positions[i * 3 + 2] += velocity[i * 3 + 2] * dt;
+            if (life[i] <= 0) positions[i * 3 + 1] = -100; // hide it
+          }
+          geo.attributes.position.needsUpdate = true;
+        },
+      };
+    })();
+
+    /* =====================================================================
+       12. ATMOSPHERE: DUST IN THE LIGHT BEAM, AND A FAINT VISIBLE BEAM
+       ===================================================================== */
+
+    const keyLightDir = keyLight.target.position.clone().sub(keyLight.position).normalize();
+
+    const dust = (() => {
+      const COUNT = 520;
+      const min = new THREE.Vector3(-5, -4, -3.5), max = new THREE.Vector3(5, 7.5, 4.0);
+      const positions = new Float32Array(COUNT * 3);
+      const drift = new Float32Array(COUNT * 3);
+      const seeds = new Float32Array(COUNT);
+      for (let i = 0; i < COUNT; i++) {
+        positions[i * 3] = rand(min.x, max.x);
+        positions[i * 3 + 1] = rand(min.y, max.y);
+        positions[i * 3 + 2] = rand(min.z, max.z);
+        drift[i * 3] = rand(-0.03, 0.03);
+        drift[i * 3 + 1] = rand(-0.035, 0.01);
+        drift[i * 3 + 2] = rand(-0.03, 0.03);
+        seeds[i] = Math.random();
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
+
+      // A tiny custom shader: each speck only shows up inside the spotlight's cone, and twinkles.
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          uTime: { value: 0 },
+          uSize: { value: 0.085 },
+          uScale: { value: window.innerHeight * pixelRatio * 0.5 },
+          uColor: { value: new THREE.Color(0xffd9a8).multiplyScalar(0.9) },
+          uLightPos: { value: keyLight.position.clone() },
+          uLightDir: { value: keyLightDir },
+          uCosOuter: { value: Math.cos(keyLight.angle * 0.62) },
+          uCosInner: { value: Math.cos(keyLight.angle * 0.22) },
+        },
+        vertexShader: /* glsl */`
+          uniform float uTime, uSize, uScale, uCosOuter, uCosInner;
+          uniform vec3 uLightPos, uLightDir;
+          attribute float aSeed;
+          varying float vAlpha;
+          void main() {
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            float inBeam = smoothstep(uCosOuter, uCosInner, dot(normalize(position - uLightPos), uLightDir));
+            float twinkle = 0.55 + 0.45 * sin(uTime * (0.5 + aSeed * 1.6) + aSeed * 40.0);
+            float nearLamp = smoothstep(1.5, 4.0, distance(position, uLightPos)); // no specks right at the lamp
+            vAlpha = inBeam * twinkle * nearLamp;
+            gl_PointSize = uSize * (0.6 + aSeed * 0.9) * uScale / -mv.z;
+            gl_Position = projectionMatrix * mv;
+          }`,
+        fragmentShader: /* glsl */`
+          uniform vec3 uColor;
+          varying float vAlpha;
+          void main() {
+            float d = length(gl_PointCoord - 0.5);
+            float a = smoothstep(0.5, 0.0, d) * vAlpha;
+            gl_FragColor = vec4(uColor, a);
+          }`,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const points = new THREE.Points(geo, material);
+      points.frustumCulled = false;
+      scene.add(points);
+
+      return {
+        material,
+        update(dt, time) {
+          for (let i = 0; i < COUNT; i++) {
+            const s = seeds[i];
+            let x = positions[i * 3] + (drift[i * 3] + Math.sin(time * 0.15 + s * 31) * 0.035) * dt;
+            let y = positions[i * 3 + 1] + (drift[i * 3 + 1] + Math.cos(time * 0.11 + s * 17) * 0.025) * dt;
+            let z = positions[i * 3 + 2] + (drift[i * 3 + 2] + Math.sin(time * 0.13 + s * 7) * 0.03) * dt;
+            // wrap around when leaving the box
+            if (y < min.y) y = max.y; else if (y > max.y) y = min.y;
+            if (x < min.x) x = max.x; else if (x > max.x) x = min.x;
+            if (z < min.z) z = max.z; else if (z > max.z) z = min.z;
+            positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
+          }
+          geo.attributes.position.needsUpdate = true;
+          material.uniforms.uTime.value = time;
+        },
+      };
+    })();
+
+    // A very faint cone of light, like a beam through dusty air
+    {
+      const length = keyLight.position.distanceTo(keyLight.target.position) * 1.8;
+      const geo = new THREE.CylinderGeometry(0.12, length * Math.tan(keyLight.angle * 0.62), length, 48, 1, true)
+        .translate(0, -length / 2, 0);
+      const material = new THREE.ShaderMaterial({
+        uniforms: { uColor: { value: new THREE.Color(0xffc690) }, uStrength: { value: 0.016 } },
+        vertexShader: /* glsl */`
+          varying vec3 vNormal;
+          varying vec3 vView;
+          varying float vAlong;
+          void main() {
+            vAlong = uv.y;                                  // 1 at the lamp, 0 at the far end
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            vView = normalize(-mv.xyz);
+            vNormal = normalize(normalMatrix * normal);
+            gl_Position = projectionMatrix * mv;
+          }`,
+        fragmentShader: /* glsl */`
+          uniform vec3 uColor;
+          uniform float uStrength;
+          varying vec3 vNormal;
+          varying vec3 vView;
+          varying float vAlong;
+          void main() {
+            float facing = pow(abs(dot(normalize(vNormal), normalize(vView))), 2.0); // soft edges
+            float along = smoothstep(0.0, 0.6, vAlong) * smoothstep(1.0, 0.85, vAlong);
+            gl_FragColor = vec4(uColor, facing * along * uStrength);
+          }`,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+      });
+      const beam = new THREE.Mesh(geo, material);
+      beam.position.copy(keyLight.position);
+      beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), keyLightDir);
+      beam.renderOrder = 10;
+      scene.add(beam);
+    }
+
+    /* =====================================================================
+       13. SOUND (generated live with the Web Audio API, no audio files)
+       Browsers only allow sound after the user interacts, so everything
+       starts on the first click/tap.
+       ===================================================================== */
+
+    const Sound = {
+      ctx: null,
+      last: { hum: -1, pour: -1, pitch: -1 },
+
+      unlock() {
+        if (!this.ctx) {
+          try { this.init(); } catch (err) { console.warn('Web Audio unavailable', err); return; }
+        }
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+      },
+
+      init() {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) throw new Error('No AudioContext');
+        const ctx = (this.ctx = new AC());
+        this.master = ctx.createGain();
+        this.master.gain.value = 0.7;
+        const compressor = ctx.createDynamicsCompressor();
+        this.master.connect(compressor);
+        compressor.connect(ctx.destination);
+
+        // Two seconds of white noise, reused for many sounds
+        const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+        this.noise = buffer;
+        const loopNoise = (rate = 1) => {
+          const src = ctx.createBufferSource();
+          src.buffer = buffer;
+          src.loop = true;
+          src.playbackRate.value = rate;
+          src.start();
+          return src;
+        };
+
+        // --- Motor hum: a few low buzzy tones through a muffling filter (volume follows belt speed)
+        this.humGain = ctx.createGain();
+        this.humGain.gain.value = 0;
+        this.humGain.connect(this.master);
+        const humFilter = ctx.createBiquadFilter();
+        humFilter.type = 'lowpass';
+        humFilter.frequency.value = 380;
+        humFilter.Q.value = 0.7;
+        humFilter.connect(this.humGain);
+        this.humOscillators = [];
+        for (const [type, freq, vol] of [['sawtooth', 52, 0.35], ['sawtooth', 104.6, 0.16], ['sine', 156, 0.25]]) {
+          const osc = ctx.createOscillator();
+          osc.type = type;
+          osc.frequency.value = freq;
+          const g = ctx.createGain();
+          g.gain.value = vol;
+          osc.connect(g);
+          g.connect(humFilter);
+          osc.start();
+          this.humOscillators.push({ osc, base: freq });
+        }
+        const rumbleFilter = ctx.createBiquadFilter();
+        rumbleFilter.type = 'bandpass';
+        rumbleFilter.frequency.value = 180;
+        rumbleFilter.Q.value = 0.8;
+        const rumbleGain = ctx.createGain();
+        rumbleGain.gain.value = 0.3;
+        loopNoise().connect(rumbleFilter);
+        rumbleFilter.connect(rumbleGain);
+        rumbleGain.connect(this.humGain);
+
+        // --- Pouring: filtered noise whose pitch rises as the can fills up
+        this.pourGain = ctx.createGain();
+        this.pourGain.gain.value = 0;
+        this.pourGain.connect(this.master);
+        const highpass = ctx.createBiquadFilter();
+        highpass.type = 'highpass';
+        highpass.frequency.value = 250;
+        loopNoise(0.9).connect(highpass);
+        this.pourFilter = ctx.createBiquadFilter();
+        this.pourFilter.type = 'bandpass';
+        this.pourFilter.frequency.value = 600;
+        this.pourFilter.Q.value = 2.5;
+        highpass.connect(this.pourFilter);
+        this.pourFilter.connect(this.pourGain);
+        const fizz = ctx.createBiquadFilter();
+        fizz.type = 'bandpass';
+        fizz.frequency.value = 2600;
+        fizz.Q.value = 0.6;
+        const fizzGain = ctx.createGain();
+        fizzGain.gain.value = 0.22;
+        highpass.connect(fizz);
+        fizz.connect(fizzGain);
+        fizzGain.connect(this.pourGain);
+        const wobble = ctx.createOscillator();      // gentle "glug" wobble
+        wobble.frequency.value = 7;
+        const wobbleAmount = ctx.createGain();
+        wobbleAmount.gain.value = 60;
+        wobble.connect(wobbleAmount);
+        wobbleAmount.connect(this.pourFilter.frequency);
+        wobble.start();
+      },
+
+      // A short pure tone that fades out (building block for metal "ting" sounds)
+      ping(freq, time, duration, volume, type = 'sine') {
+        const ctx = this.ctx;
+        const osc = ctx.createOscillator();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, time);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, time);
+        g.gain.exponentialRampToValueAtTime(volume, time + 0.003);
+        g.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+        osc.connect(g);
+        g.connect(this.master);
+        osc.start(time);
+        osc.stop(time + duration + 0.05);
+        return osc;
+      },
+
+      // A short burst of filtered noise (clicks, thuds)
+      burst(time, duration, volume, filterType, freq, q = 0.8) {
+        const ctx = this.ctx;
+        const src = ctx.createBufferSource();
+        src.buffer = this.noise;
+        const filter = ctx.createBiquadFilter();
+        filter.type = filterType;
+        filter.frequency.value = freq;
+        filter.Q.value = q;
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(volume, time);
+        g.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+        src.connect(filter);
+        filter.connect(g);
+        g.connect(this.master);
+        src.start(time, Math.random() * 1.5);
+        src.stop(time + duration + 0.05);
+      },
+
+      // Chain links knocking together
+      clink(strength = 1) {
+        if (!this.ctx) return;
+        const t0 = this.ctx.currentTime;
+        const hits = 2 + Math.floor(Math.random() * 2);
+        for (let i = 0; i < hits; i++) {
+          const t = t0 + i * rand(0.025, 0.065);
+          const f = rand(2300, 4000);
+          const v = 0.1 * strength * (1 - i * 0.25);
+          this.ping(f, t, rand(0.08, 0.16), v);
+          this.ping(f * 2.71, t, 0.05, v * 0.45);
+          this.ping(f * 1.53, t, 0.07, v * 0.3);
+          this.burst(t, 0.015, v * 0.6, 'highpass', 4000);
+        }
+      },
+
+      // The pull switch clicking
+      click() {
+        if (!this.ctx) return;
+        const t = this.ctx.currentTime;
+        this.burst(t, 0.025, 0.35, 'bandpass', 1900, 1.2);
+        this.ping(1300, t, 0.04, 0.12, 'triangle');
+        this.burst(t + 0.07, 0.02, 0.2, 'bandpass', 2400, 1.2);
+      },
+
+      // The lid pressing onto the can
+      clunk() {
+        if (!this.ctx) return;
+        const ctx = this.ctx, t = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        osc.frequency.setValueAtTime(170, t);
+        osc.frequency.exponentialRampToValueAtTime(60, t + 0.12);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.55, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+        osc.connect(g);
+        g.connect(this.master);
+        osc.start(t);
+        osc.stop(t + 0.3);
+        this.burst(t, 0.06, 0.4, 'lowpass', 900);
+        this.ping(3100, t, 0.09, 0.05);
+      },
+
+      // A can landing on the belt
+      tock(strength = 1) {
+        if (!this.ctx) return;
+        const ctx = this.ctx, t = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        osc.frequency.setValueAtTime(520, t);
+        osc.frequency.exponentialRampToValueAtTime(320, t + 0.08);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.22 * strength, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+        osc.connect(g);
+        g.connect(this.master);
+        osc.start(t);
+        osc.stop(t + 0.15);
+        this.burst(t, 0.03, 0.15 * strength, 'bandpass', 1300);
+      },
+
+      // Called every frame with the belt speed (0..1) and pour state
+      update(beltLevel, pouring, fill) {
+        if (!this.ctx) return;
+        const t = this.ctx.currentTime;
+        if (Math.abs(beltLevel - this.last.hum) > 0.01) {
+          this.last.hum = beltLevel;
+          this.humGain.gain.setTargetAtTime(beltLevel * 0.16, t, 0.1);
+          for (const h of this.humOscillators) h.osc.frequency.setTargetAtTime(h.base * (0.8 + 0.25 * beltLevel), t, 0.15);
+        }
+        const pourLevel = pouring ? 1 : 0;
+        if (pourLevel !== this.last.pour) {
+          this.last.pour = pourLevel;
+          this.pourGain.gain.setTargetAtTime(pourLevel * 0.5, t, pouring ? 0.04 : 0.12);
+        }
+        if (Math.abs(fill - this.last.pitch) > 0.01) {
+          this.last.pitch = fill;
+          this.pourFilter.frequency.setTargetAtTime(450 + fill * 1300, t, 0.1);
+        }
+      },
+    };
+
+    /* =====================================================================
+       14. THE MACHINE SEQUENCE (a simple "state machine")
+       idle -> toFill -> filling -> capping -> toEnd -> runout -> arriving -> idle
+       ===================================================================== */
+
+    const machine = {
+      state: 'arriving',  // the first can drops in when the page loads
+      t: 0,               // seconds spent in the current state
+      can: null,          // the can currently on the belt
+      beltSpeed: 0,
+      lamp: 0,            // indicator lamp brightness 0..1
+      flicker: 0,         // seconds of start-up flicker left
+      nozzleY: 0,         // nozzle slide offset
+      nozzleTarget: 0,
+    };
+
+    function go(state) {
+      machine.state = state;
+      machine.t = 0;
+    }
+
+    function spawnCan() {
+      machine.can = new Can();
+      machine.can.appear();
+    }
+
+    // Called when the chain is tugged. Returns true if a new cycle started.
+    function startCycle() {
+      if (machine.state !== 'idle' || !machine.can) return false; // ignore pulls while busy
+      machine.pourStarted = false;
+      machine.pourStopped = false;
+      machine.flicker = 0.45;
+      go('toFill');
+      return true;
+    }
+
+    function updateMachine(dt) {
+      const m = machine;
+      const can = m.can;
+      m.t += dt;
+
+      switch (m.state) {
+        case 'idle':
+          m.beltSpeed = 0;
+          break;
+
+        // 1) Carry the empty can along the belt to the nozzle (eased start and stop)
+        case 'toFill': {
+          const k = clamp01(m.t / TIMING.toFill);
+          const s = lerp(SPOT.canStart, SPOT.fill, Ease.inOutSine(k));
+          m.beltSpeed = dt > 0 ? (s - can.s) / dt : 0; // belt moves exactly as fast as the can
+          can.s = s;
+          if (k >= 1) { m.beltSpeed = 0; go('filling'); }
+          break;
+        }
+
+        // 2) Pour: nozzle dips, stream falls, liquid rises
+        case 'filling': {
+          const t = m.t;
+          can.xray = Ease.inOutSine(clamp01(t / 0.7));  // label turns see-through so we can watch
+          if (!m.pourStopped) m.nozzleTarget = -0.05;
+          if (!m.pourStarted && t >= TIMING.pourDelay) { m.pourStarted = true; stream.start(); }
+          const fillProgress = (t - TIMING.fillStart) / TIMING.fillDuration;
+          can.fill = Ease.inOutSine(clamp01(fillProgress));
+          if (fillProgress >= 1 && !m.pourStopped) {
+            m.pourStopped = true;
+            stream.stop();
+            m.nozzleTarget = 0.06; // lift the nozzle to make room for the lid
+          }
+          if (m.pourStopped && t >= TIMING.fillStart + TIMING.fillDuration + 0.7) go('capping');
+          break;
+        }
+
+        // 3) Lid pops into place
+        case 'capping': {
+          const t = m.t;
+          const pop = clamp01(t / 0.22);
+          const drop = clamp01((t - 0.32) / 0.14);
+          can.lid.visible = true;
+          can.lid.scale.setScalar(Math.max(0.001, Ease.outBack(pop)));
+          can.lid.position.y = CAN.height - 0.004 + 0.2 * (1 - Ease.inQuad(drop));
+          if (drop >= 1 && !can.lidOn) {
+            can.lidOn = true;
+            can.squash = 1;
+            m.lidLandedAt = t;
+            m.nozzleTarget = 0;
+            Sound.clunk();
+          }
+          if (can.lidOn) can.xray = 1 - Ease.inOutSine(clamp01((t - m.lidLandedAt) / 0.6));
+          if (can.lidOn && t - m.lidLandedAt > 0.75) go('toEnd');
+          break;
+        }
+
+        // 4) Carry the full can to the end of the belt
+        case 'toEnd': {
+          m.beltSpeed = BELT.cruiseSpeed * Ease.inOutSine(clamp01(m.t / TIMING.beltRampUp));
+          can.s += m.beltSpeed * dt;
+          if (can.s >= SPOT.dropOff) {
+            can.startFall(m.beltSpeed);
+            Sound.tock(0.45);
+            m.can = null;
+            go('runout');
+          }
+          break;
+        }
+
+        // 5) Belt slows to a stop, then a new can appears
+        case 'runout': {
+          m.beltSpeed = BELT.cruiseSpeed * (1 - Ease.inOutSine(clamp01(m.t / TIMING.beltRampDown)));
+          if (m.t >= TIMING.beltRampDown + 0.15) {
+            m.beltSpeed = 0;
+            spawnCan();
+            go('arriving');
+          }
+          break;
+        }
+
+        // 6) Wait for the new can to settle, then accept chain pulls again
+        case 'arriving':
+          m.beltSpeed = 0;
+          if (!m.can) spawnCan();
+          if (!m.can.appearing && m.t > 0.2) go('idle');
+          break;
+      }
+
+      // Indicator lamp: on while the machine works, with a little flicker at start-up
+      const working = ['toFill', 'filling', 'capping', 'toEnd'].includes(m.state)
+        || (m.state === 'runout' && m.t < TIMING.beltRampDown);
+      let lampTarget = working ? 1 : 0;
+      if (m.flicker > 0) {
+        m.flicker -= dt;
+        lampTarget = Math.floor(m.flicker * 22) % 2 ? 1 : 0.15;
+      }
+      m.lamp = damp(m.lamp, lampTarget, 18, dt);
+      lampMaterial.emissiveIntensity = 0.03 + m.lamp * 7;
+      lampLight.intensity = m.lamp * 1.6;
+
+      // Nozzle slides smoothly toward its target
+      m.nozzleY = damp(m.nozzleY, m.nozzleTarget, 7, dt);
+      nozzleSpout.position.y = STATION.housingBottom + m.nozzleY;
+    }
+
+    /* =====================================================================
+       15. INPUT (mouse) AND CAMERA CONTROLS
+       ===================================================================== */
+
+    const canvas = renderer.domElement;
+    const raycaster = new THREE.Raycaster();
+    const pointerNdc = new THREE.Vector2();
+    let dragPointerId = null;
+
+    const chain = new PullChain(CHAIN_TOP);
+    const hint = document.getElementById('hint');
+    let hintHidden = false;
+
+    chain.onTug = () => {
+      Sound.click();
+      if (startCycle() && !hintHidden) {
+        hintHidden = true;
+        hint.classList.add('gone');
+      }
+    };
+
+    function rayFromEvent(e) {
+      const rect = canvas.getBoundingClientRect();
+      pointerNdc.set(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1
+      );
+      raycaster.setFromCamera(pointerNdc, camera);
+      return raycaster.ray;
+    }
+
+    function isOverChain(e) {
+      rayFromEvent(e);
+      return raycaster.intersectObject(chain.hitArea, false).length > 0;
+    }
+
+    // NOTE: this listener is added BEFORE the OrbitControls are created, so it runs first
+    // and can switch the camera controls off when you grab the chain.
+    canvas.addEventListener('pointerdown', (e) => {
+      Sound.unlock();
+      if (dragPointerId !== null || !e.isPrimary) return;
+      if (isOverChain(e)) {
+        controls.enabled = false;
+        dragPointerId = e.pointerId;
+        canvas.setPointerCapture(e.pointerId);
+        chain.beginDrag(raycaster.ray);
+        canvas.style.cursor = 'grabbing';
+      }
+    });
+
+    canvas.addEventListener('pointermove', (e) => {
+      if (e.pointerId === dragPointerId) {
+        chain.drag(rayFromEvent(e));
+      } else if (e.pointerType === 'mouse' && dragPointerId === null && e.buttons === 0) {
+        canvas.style.cursor = isOverChain(e) ? 'grab' : '';
+      }
+    });
+
+    function endChainDrag(e) {
+      if (e.pointerId !== dragPointerId) return;
+      dragPointerId = null;
+      chain.endDrag();
+      controls.enabled = true;
+      canvas.style.cursor = '';
+      if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+    }
+    canvas.addEventListener('pointerup', endChainDrag);
+    canvas.addEventListener('pointercancel', endChainDrag);
+    canvas.addEventListener('lostpointercapture', endChainDrag);
+
+    // Some browsers (iOS) only allow audio to start on a "tap up"
+    window.addEventListener('pointerup', () => Sound.unlock());
+    window.addEventListener('keydown', () => Sound.unlock());
+
+    // Gentle, limited orbit. No panning, and only a little zoom.
+    const controls = new OrbitControls(camera, canvas);
+    controls.target.copy(CAMERA_SETUP.target);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.enablePan = false;
+    controls.rotateSpeed = 0.35;
+    controls.zoomSpeed = 0.4;
+    controls.minPolarAngle = CAMERA_SETUP.polar - CAMERA_SETUP.orbitUp;
+    controls.maxPolarAngle = CAMERA_SETUP.polar + CAMERA_SETUP.orbitUp;
+    controls.minAzimuthAngle = CAMERA_SETUP.azimuth - CAMERA_SETUP.orbitSide;
+    controls.maxAzimuthAngle = CAMERA_SETUP.azimuth + CAMERA_SETUP.orbitSide;
+
+    /* =====================================================================
+       16. WINDOW RESIZING
+       If the window gets narrow, the camera steps back a little so the
+       machine never gets cut off. Fog is adjusted to match.
+       ===================================================================== */
+
+    function onResize() {
+      const w = window.innerWidth, h = window.innerHeight;
+      camera.aspect = w / h;
+      const halfTan = Math.tan(deg(camera.fov / 2));
+      const fitDistance = Math.max(CAMERA_SETUP.distance, 19 / (2 * halfTan * camera.aspect));
+      controls.minDistance = fitDistance * 0.92;
+      controls.maxDistance = fitDistance * 1.08;
+      const dir = camera.position.clone().sub(controls.target).normalize();
+      camera.position.copy(controls.target).addScaledVector(dir, fitDistance);
+      camera.updateProjectionMatrix();
+
+      renderer.setSize(w, h);
+      composer.setSize(w, h);
+      dust.material.uniforms.uScale.value = h * pixelRatio * 0.5;
+    }
+    window.addEventListener('resize', onResize);
+    onResize();
+
+    /* =====================================================================
+       17. THE ANIMATION LOOP (runs every frame)
+       ===================================================================== */
+
+    const clock = new THREE.Clock();
+    setTimeout(() => { if (!hintHidden) hint.classList.add('show'); }, 1600);
+
+    renderer.setAnimationLoop(() => {
+      const dt = Math.min(clock.getDelta(), 1 / 20); // cap the step after tab switches
+      const time = clock.elapsedTime;
+
+      controls.update();
+      chain.update(dt, time);
+      updateMachine(dt);
+      updateConveyor(machine.beltSpeed, dt);
+      for (const can of [...cans]) can.update(dt);
+
+      // The stream goes from the nozzle tip down to the liquid surface in the can under it
+      const tipY = STATION.nozzleTip.y + machine.nozzleY;
+      const pouringCan = machine.state === 'filling' ? machine.can : null;
+      const surfaceY = pouringCan ? pouringCan.levelWorldY() : tipY - 0.6;
+      stream.update(dt, time, tipY, surfaceY);
+      splash.update(dt, stream.hitting && stream.phase === 'flowing', STATION.x, surfaceY, STATION.nozzleTip.z);
+
+      dust.update(dt, time);
+      powerLedMaterial.emissiveIntensity = 2.0 + Math.sin(time * 2.2) * 0.25;
+
+      Sound.update(
+        Math.min(1, Math.abs(machine.beltSpeed) / BELT.cruiseSpeed),
+        stream.hitting,
+        pouringCan ? pouringCan.fill : 0
+      );
+
+      // Keep the fog looking the same at any camera distance
+      scene.fog.density = FOG_DENSITY * (FOG_REFERENCE_DISTANCE / camera.position.distanceTo(controls.target));
+
+      composer.render();
+      window.__dioramaStarted = true;
+    });
+
+    // Handy for debugging in the browser console
+    window.diorama = { machine, chain, startCycle, cans, camera, controls, THREE };
+  </script>
+</body>
+</html>
