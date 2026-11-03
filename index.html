@@ -2,43 +2,118 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Soda Filler Diorama</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Soda Line</title>
 
   <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      background: #000;
-      overflow: hidden;
+    :root {
+      --ink: #e6d9c3;
+      --dim: rgba(230, 217, 195, 0.36);
+      --edge: rgba(230, 217, 195, 0.13);
+      --amber: #f2a65a;
     }
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
     body {
-      touch-action: none;               /* let our own code handle touch drags */
       -webkit-user-select: none;
       user-select: none;
-      -webkit-tap-highlight-color: transparent;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      color: var(--ink);
     }
-    canvas { display: block; outline: none; }
+    canvas { display: block; outline: none; touch-action: none; }
 
-    /* The tiny hint at the bottom of the screen */
-    #hint {
+    /* Coin counter (top left) */
+    #money {
       position: fixed;
-      left: 50%;
-      bottom: max(26px, env(safe-area-inset-bottom));
-      transform: translateX(-50%);
-      font: 500 11px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-      letter-spacing: 0.38em;
-      text-transform: lowercase;
-      color: rgba(236, 222, 198, 0.5);
+      left: 22px;
+      top: 18px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 14px;
+      letter-spacing: 0.05em;
+      font-variant-numeric: tabular-nums;
       opacity: 0;
-      transition: opacity 1.6s ease;
+      transition: opacity 1.4s ease;
       pointer-events: none;
-      white-space: nowrap;
     }
-    #hint.show { opacity: 1; }
-    #hint.gone { opacity: 0; transition-duration: 2.4s; }
+    #money.on { opacity: 1; }
+    #money i {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      border: 1.5px solid var(--amber);
+      box-shadow: 0 0 6px rgba(242, 166, 90, 0.45);
+    }
 
-    /* Shown only if Three.js can't be loaded (e.g. no internet connection) */
+    /* Shop: a thin column of icon tiles (right edge) */
+    #shop {
+      position: fixed;
+      right: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .tile {
+      position: relative;
+      width: 52px;
+      height: 58px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 1px solid var(--edge);
+      border-radius: 2px;
+      background: rgba(10, 9, 8, 0.78);
+      cursor: default;
+      transition: border-color 0.25s, background 0.25s;
+      animation: tile-in 0.9s ease-out;
+    }
+    .tile[hidden] { display: none; }
+    .tile svg {
+      width: 22px;
+      height: 22px;
+      fill: none;
+      stroke: var(--dim);
+      stroke-width: 1.4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      transition: stroke 0.25s;
+    }
+    .tile .c { font-size: 10px; color: var(--dim); letter-spacing: 0.03em; font-variant-numeric: tabular-nums; }
+    .tile .p { position: absolute; left: 6px; right: 6px; bottom: 4px; display: flex; gap: 1px; }
+    .tile .p b { flex: 1; height: 2px; background: rgba(230, 217, 195, 0.12); }
+    .tile .p b.f { background: rgba(242, 166, 90, 0.75); }
+    .tile.ok { cursor: pointer; border-color: rgba(242, 166, 90, 0.34); }
+    .tile.ok svg { stroke: var(--ink); }
+    .tile.ok .c { color: var(--amber); }
+    .tile.ok:hover { border-color: rgba(242, 166, 90, 0.7); background: rgba(34, 24, 14, 0.85); }
+    .tile.max .c { visibility: hidden; }
+    .tile.flash { animation: tile-buy 0.5s ease-out; }
+    @keyframes tile-in { from { opacity: 0; transform: translateX(8px); } }
+    @keyframes tile-buy { from { background: rgba(242, 166, 90, 0.35); } }
+
+    /* Little "+12" that floats up where something sells */
+    .pop {
+      position: fixed;
+      pointer-events: none;
+      font-size: 11px;
+      color: var(--amber);
+      letter-spacing: 0.04em;
+      text-shadow: 0 0 8px rgba(255, 140, 50, 0.45);
+      transform: translate(-50%, -50%);
+      animation: pop-rise 1.6s ease-out forwards;
+    }
+    @keyframes pop-rise {
+      0% { opacity: 0; margin-top: 0; }
+      15% { opacity: 1; }
+      100% { opacity: 0; margin-top: -44px; }
+    }
+
+    /* Shown only if Three.js can't be loaded */
     #error {
       position: fixed;
       inset: 0;
@@ -46,13 +121,13 @@
       place-items: center;
       padding: 24px;
       text-align: center;
-      font: 14px/1.5 system-ui, sans-serif;
+      font: 13px/1.5 system-ui, sans-serif;
       color: #b9aa94;
     }
     #error[hidden] { display: none; }
   </style>
 
-  <!-- Tell the browser where "three" and its add-ons live (a CDN). No build step needed. -->
+  <!-- Where "three" and its add-ons come from (a CDN). No build step needed. -->
   <script type="importmap">
     {
       "imports": {
@@ -64,15 +139,16 @@
 </head>
 
 <body>
-  <div id="hint">pull the chain</div>
+  <div id="money"><i></i><span>0</span></div>
+  <div id="shop"></div>
   <div id="error" hidden></div>
 
   <script>
-    // Safety net: if the 3D scene hasn't started after a few seconds, say why.
+    // If the scene hasn't started after a few seconds, explain why.
     setTimeout(function () {
       if (!window.__dioramaStarted) {
         var el = document.getElementById('error');
-        el.textContent = 'The 3D scene could not start. It needs an internet connection (to load Three.js) and a browser with WebGL.';
+        el.textContent = 'Needs an internet connection (to load Three.js) and a browser with WebGL.';
         el.hidden = false;
       }
     }, 9000);
@@ -80,7 +156,6 @@
 
   <script type="module">
     import * as THREE from 'three';
-    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
     import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
     import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
     import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -88,16 +163,16 @@
     import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
     /* =====================================================================
-       0. SETTINGS & SMALL HELPERS
-       Numbers you can tweak to change sizes, speeds and timings.
+       0. SMALL HELPERS
        ===================================================================== */
 
     const deg = THREE.MathUtils.degToRad;
     const lerp = THREE.MathUtils.lerp;
+    const clamp = THREE.MathUtils.clamp;
     const clamp01 = (x) => Math.min(1, Math.max(0, x));
+    const rand = (a, b) => a + Math.random() * (b - a);
 
-    // Easing curves: take a value 0..1 and return a smoothed 0..1.
-    // They are what make movements start and stop gently instead of snapping.
+    // Easing curves: take 0..1, return a smoothed 0..1 (no instant snaps).
     const Ease = {
       inOutSine: (t) => -(Math.cos(Math.PI * t) - 1) / 2,
       outCubic: (t) => 1 - Math.pow(1 - t, 3),
@@ -115,110 +190,148 @@
       },
     };
 
-    // Moves `current` smoothly toward `target`. Works the same at any frame rate.
+    // Moves `current` smoothly toward `target`, the same at any frame rate.
     function damp(current, target, speed, dt) {
       return lerp(current, target, 1 - Math.exp(-speed * dt));
     }
 
-    // The conveyor belt
-    const BELT = {
-      length: 6.8,                       // distance between the two rollers
-      angle: 0,                          // tilt of the belt (0 = flat)
-      width: 1.0,
-      rollerRadius: 0.18,
-      thickness: 0.025,
-      start: new THREE.Vector3(-3.4, 1.0, 0), // world position of the first roller
-      cruiseSpeed: 1.35,                 // units per second when running at full speed
-      textureTile: 0.32,                 // how long one repeat of the belt texture is
-    };
-    const BELT_TOP = BELT.rollerRadius + BELT.thickness; // height of the belt surface above the roller axles
-
-    // Distances along the belt (measured from the first roller)
-    const SPOT = {
-      canStart: 0.6,                     // where the empty can waits
-      fill: BELT.length / 2,             // where the filling nozzle is (the middle)
-      dropOff: BELT.length - 0.08,       // where the can tips off the end
-    };
-
-    // The soda can
-    const CAN = {
-      radius: 0.23,
-      height: 0.8,
-      levelMin: 0.12,                    // liquid height (inside the can) when it starts filling
-      levelMax: 0.6,                     // liquid height when full
-    };
-
-    // How long each step of the sequence takes (seconds)
-    const TIMING = {
-      toFill: 3.2,                       // ride from the start to the nozzle
-      pourDelay: 0.3,                    // pause before the nozzle opens
-      fillStart: 0.62,                   // liquid starts rising (stream has reached the can)
-      fillDuration: 3.4,                 // time to fill the can
-      beltRampUp: 0.9,                   // belt speeding up after capping
-      beltRampDown: 1.1,                 // belt slowing down after the can drops off
-    };
-
-    // The camera: a fixed 3/4 view looking down ~32 degrees, from far away with a
-    // narrow lens, so the machine sits small in a big empty black frame.
-    const CAMERA_SETUP = {
-      fov: 24,
-      distance: 29,
-      polar: deg(57.5),                  // angle from straight up (90 - 57.5 = 32.5 degrees downward tilt)
-      azimuth: deg(-30),                 // angle around the diorama (negative = from the front-left)
-      target: new THREE.Vector3(0.2, 1.25, 0.2),
-      orbitSide: deg(20),                // how far you can orbit left/right
-      orbitUp: deg(3),                   // ...and up/down
-    };
-
-    const FOG_DENSITY = 0.011;
-    const FOG_REFERENCE_DISTANCE = CAMERA_SETUP.distance; // fog is tuned for this camera distance
+    // Short number format: 4.5, 12, 1.24k, 34.0M ...
+    function fmt(n) {
+      if (n < 10) return (Math.round(n * 10) / 10).toString();
+      if (n < 1000) return Math.floor(n).toString();
+      const units = ['k', 'M', 'B', 'T', 'q', 'Q'];
+      let u = -1;
+      while (n >= 1000 && u < units.length - 1) { n /= 1000; u++; }
+      return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.floor(n).toString()) + units[u];
+    }
 
     /* =====================================================================
-       1. RENDERER, SCENE AND CAMERA
+       1. LAYOUT, ECONOMY AND SAVE DATA
        ===================================================================== */
+
+    const BAY = 2.6;                          // distance between stations along the belt
+    const BELT = { y: 1.0, width: 1.0, rollerRadius: 0.18, thickness: 0.025, tile: BAY / 8 };
+    const SURFACE = BELT.y + BELT.rollerRadius + BELT.thickness; // height where cans stand
+    const CAN = { radius: 0.23, height: 0.8, levelMin: 0.1, levelMax: 0.62 };
+    const CAN_TOP = SURFACE + CAN.height;
+    const SPACING = 0.6;                      // closest two cans can be on the belt
+    const START_X = -BAY / 2;                 // the first roller
+    const bayX = (i) => i * BAY;              // x position of station i
+    const SUPPORT_DEPTH = 80;                 // supports run this far down (much further than you can see)
+
+    // Stations in order along the belt. Drop and Fill are there from the start.
+    const ST = { DROP: 0, FILL: 1, CAP: 2, LABEL: 3, STAMP: 4 };
+
+    // Shop items. Items with `max` have levels; the rest are bought once.
+    // `after` = only offered once that other item is owned.
+    const SHOP = [
+      { id: 'syrup', icon: 'drop', cost: 5, grow: 1.6, max: 12 },
+      { id: 'motor', icon: 'gear', cost: 8, grow: 1.75, max: 8 },
+      { id: 'nozzle', icon: 'tap', cost: 12, grow: 1.8, max: 8 },
+      { id: 'alloy', icon: 'can', cost: 60, grow: 2.0, max: 10 },
+      { id: 'art', icon: 'wave', cost: 220, grow: 1.85, max: 10, after: 'label' },
+      { id: 'cap', icon: 'press', cost: 25, station: ST.CAP },
+      { id: 'label', icon: 'label', cost: 150, station: ST.LABEL, after: 'cap' },
+      { id: 'stamp', icon: 'stamp', cost: 900, station: ST.STAMP, after: 'label' },
+      { id: 'crate', icon: 'six', cost: 5000, after: 'stamp' },
+    ];
+    const ONE_TIME = new Set(['cap', 'label', 'stamp', 'crate']);
+
+    // Everything that gets saved
+    const game = {
+      money: 0,
+      lv: { syrup: 0, motor: 0, nozzle: 0, alloy: 0, art: 0 },
+      own: { cap: false, label: false, stamp: false, crate: false },
+      seen: {},
+    };
+
+    const itemCost = (item) => (item.max ? item.cost * Math.pow(item.grow, game.lv[item.id]) : item.cost);
+    const bayCount = () => (game.own.stamp ? 5 : game.own.label ? 4 : game.own.cap ? 3 : 2);
+    const endX = () => bayX(bayCount() - 1) + BAY / 2;           // where the belt ends
+    const pourRate = () => 0.3 * (1 + 0.3 * game.lv.nozzle);      // fill per second
+    const indexTime = () => 1.6 / (1 + 0.22 * game.lv.motor);    // seconds to move one station
+    const labelRate = () => 0.6;                                   // wraps per second
+
+    // How well the can was filled: just right is best, spilling is bad
+    function fillFactor(c) {
+      if (c.maxFill > 1.03) return 0.5;
+      if (c.fill >= 0.9) return 1.5;
+      if (c.fill >= 0.7) return 1;
+      return c.fill;
+    }
+
+    // What one finished can is worth
+    function canValue(c) {
+      let v = Math.pow(1.25, game.lv.syrup) * Math.pow(1.35, game.lv.alloy) * fillFactor(c);
+      if (c.capped) v *= 2.5;
+      if (c.labeled) v *= 3 * Math.pow(1.3, game.lv.art);
+      if (c.stamped) v *= 2.5;
+      return v;
+    }
+
+    const SAVE_KEY = 'soda-line-save-1';
+    function saveGame() {
+      try { localStorage.setItem(SAVE_KEY, JSON.stringify(game)); } catch (e) { /* storage unavailable */ }
+    }
+    function loadGame() {
+      try {
+        const data = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
+        if (!data) return;
+        if (Number.isFinite(data.money)) game.money = Math.max(0, data.money);
+        for (const item of SHOP) {
+          const n = data.lv && data.lv[item.id];
+          if (item.max && Number.isFinite(n)) game.lv[item.id] = clamp(Math.floor(n), 0, item.max);
+        }
+        for (const k in game.own) if (data.own && typeof data.own[k] === 'boolean') game.own[k] = data.own[k];
+        if (data.seen && typeof data.seen === 'object') Object.assign(game.seen, data.seen);
+      } catch (e) { /* ignore a broken save */ }
+    }
+
+    /* =====================================================================
+       2. RENDERER, SCENE, CAMERA, BLOOM
+       ===================================================================== */
+
+    // Camera: a 3/4 view tilted down ~32 degrees, with a long lens.
+    const VIEW = {
+      fov: 24,
+      polar: deg(57.5),          // 90 - 57.5 = 32.5 degrees downward tilt
+      azimuth: deg(-30),         // from the front-left
+      minDist: 3.8,              // closest zoom
+      maxDist: 34,               // furthest zoom
+      startDist: 26,
+      orbitSide: deg(28),
+      orbitUp: deg(7),
+    };
+    const FOG_DENSITY = 0.011;
+    const FOG_REF = 29;          // fog is tuned for this camera distance
 
     const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
     const pixelRatio = Math.min(window.devicePixelRatio, 2);
     renderer.setPixelRatio(pixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;  // soft shadow edges
-    renderer.toneMapping = THREE.ACESFilmicToneMapping; // film-like handling of bright/dark
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.2;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.localClippingEnabled = true;               // used to keep the liquid surface level
+    renderer.localClippingEnabled = true; // keeps the liquid surface level
     document.body.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000000);
-    scene.fog = new THREE.FogExp2(0x000000, FOG_DENSITY); // fades distant things into black
+    scene.fog = new THREE.FogExp2(0x000000, FOG_DENSITY);
 
-    const camera = new THREE.PerspectiveCamera(CAMERA_SETUP.fov, window.innerWidth / window.innerHeight, 0.5, 200);
-    camera.position
-      .setFromSphericalCoords(CAMERA_SETUP.distance, CAMERA_SETUP.polar, CAMERA_SETUP.azimuth)
-      .add(CAMERA_SETUP.target);
-    camera.lookAt(CAMERA_SETUP.target);
+    const camera = new THREE.PerspectiveCamera(VIEW.fov, window.innerWidth / window.innerHeight, 0.3, 200);
 
-    /* =====================================================================
-       2. POST-PROCESSING (bloom = soft glow around bright lights)
-       ===================================================================== */
-
-    // Render into an HDR, multisampled (anti-aliased) target so bloom has bright values to work with.
-    const composerTarget = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
-    const composer = new EffectComposer(renderer, composerTarget);
+    // HDR + anti-aliased render target, then bloom, then tone mapping
+    const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
     composer.setPixelRatio(pixelRatio);
     composer.addPass(new RenderPass(scene, camera));
-    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.75, 0.6, 0.9);
-    composer.addPass(bloomPass);
-    composer.addPass(new OutputPass()); // applies tone mapping + colour conversion at the end
+    composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.75, 0.6, 0.9));
+    composer.addPass(new OutputPass());
     composer.setSize(window.innerWidth, window.innerHeight);
 
-    /* =====================================================================
-       3. REFLECTIONS (a tiny dark "photo studio" for metals to reflect)
-       Metal looks black unless it has something to reflect. We build a dark
-       room with one warm soft-box and one cool strip, matching our lights.
-       ===================================================================== */
-
+    // Reflections: a tiny dark studio (one warm soft-box, one cool strip) for metals to reflect
     function buildEnvironmentMap() {
       const envScene = new THREE.Scene();
       envScene.add(new THREE.Mesh(
@@ -234,9 +347,8 @@
         mesh.lookAt(0, 0, 0);
         envScene.add(mesh);
       };
-      panel(5, 5, 0xffd2a0, 3.0, new THREE.Vector3(2.5, 8.5, 4.5));  // warm soft-box (like the key light)
-      panel(9, 1.2, 0x9cbcff, 1.2, new THREE.Vector3(5, 3.5, -8));   // cool strip behind (like the rim light)
-
+      panel(5, 5, 0xffd2a0, 3.0, new THREE.Vector3(2.5, 8.5, 4.5));
+      panel(9, 1.2, 0x9cbcff, 1.2, new THREE.Vector3(5, 3.5, -8));
       const pmrem = new THREE.PMREMGenerator(renderer);
       const texture = pmrem.fromScene(envScene, 0.04).texture;
       pmrem.dispose();
@@ -245,13 +357,12 @@
     scene.environment = buildEnvironmentMap();
 
     /* =====================================================================
-       4. LIGHTS
+       3. LIGHTS
+       The spotlight follows the camera as you pan along the line.
        ===================================================================== */
 
-    // Very low fill light so the shadows aren't pure black
     scene.add(new THREE.HemisphereLight(0x7d8fa8, 0x15100b, 0.1));
 
-    // Main warm spotlight from above, at an angle, casting soft shadows
     const keyLight = new THREE.SpotLight(0xffc690, 340, 0, deg(30), 0.6, 2);
     keyLight.position.set(2.4, 9.6, 4.4);
     keyLight.target.position.set(0, 1.5, 0);
@@ -262,15 +373,17 @@
     keyLight.shadow.bias = -0.0003;
     keyLight.shadow.normalBias = 0.02;
     scene.add(keyLight, keyLight.target);
+    const KEY_OFFSET = keyLight.position.clone().sub(keyLight.target.position);
+    const KEY_DIR = KEY_OFFSET.clone().negate().normalize();
 
-    // Faint cool rim light from behind, to separate shapes from the black background
     const rimLight = new THREE.SpotLight(0x8fb4ff, 50, 0, deg(40), 1.0, 2);
     rimLight.position.set(4.5, 5.5, -7.5);
     rimLight.target.position.set(0, 1.4, 0);
     scene.add(rimLight, rimLight.target);
+    const RIM_OFFSET = rimLight.position.clone().sub(rimLight.target.position);
 
     /* =====================================================================
-       5. PROCEDURAL TEXTURES (drawn with a 2D canvas, so no image files)
+       4. TEXTURES (drawn on a 2D canvas, so no image files) AND MATERIALS
        ===================================================================== */
 
     function makeCanvas(w, h) {
@@ -288,7 +401,6 @@
       return texture;
     }
 
-    // Sprinkle random light/dark speckles over a canvas
     function addGrain(g, w, h, amount) {
       const img = g.getImageData(0, 0, w, h);
       const d = img.data;
@@ -299,48 +411,7 @@
       g.putImageData(img, 0, 0);
     }
 
-    const rand = (a, b) => a + Math.random() * (b - a);
-
-    // Worn concrete for the floating slab
-    function makeConcreteTexture() {
-      const S = 512;
-      const [c, g] = makeCanvas(S, S);
-      g.fillStyle = '#5c5852';
-      g.fillRect(0, 0, S, S);
-      for (let i = 0; i < 140; i++) {           // soft stains
-        const x = rand(0, S), y = rand(0, S), r = rand(15, 120);
-        const dark = Math.random() < 0.6;
-        const grd = g.createRadialGradient(x, y, 0, x, y, r);
-        grd.addColorStop(0, dark ? 'rgba(20,16,12,0.13)' : 'rgba(255,235,210,0.06)');
-        grd.addColorStop(1, 'rgba(0,0,0,0)');
-        g.fillStyle = grd;
-        g.fillRect(x - r, y - r, r * 2, r * 2);
-      }
-      for (let i = 0; i < 90; i++) {            // scratches
-        g.strokeStyle = Math.random() < 0.5 ? 'rgba(255,245,230,0.07)' : 'rgba(0,0,0,0.2)';
-        g.lineWidth = rand(0.3, 1.4);
-        const x = rand(0, S), y = rand(0, S), a = rand(0, Math.PI), l = rand(10, 80);
-        g.beginPath();
-        g.moveTo(x, y);
-        g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
-        g.stroke();
-      }
-      for (let i = 0; i < 600; i++) {           // little pits
-        g.fillStyle = `rgba(0,0,0,${rand(0.15, 0.45)})`;
-        g.beginPath();
-        g.arc(rand(0, S), rand(0, S), rand(0.3, 1.8), 0, Math.PI * 2);
-        g.fill();
-      }
-      const edge = g.createRadialGradient(S / 2, S / 2, S * 0.3, S / 2, S / 2, S * 0.75); // grimy edges
-      edge.addColorStop(0, 'rgba(0,0,0,0)');
-      edge.addColorStop(1, 'rgba(0,0,0,0.4)');
-      g.fillStyle = edge;
-      g.fillRect(0, 0, S, S);
-      addGrain(g, S, S, 24);
-      return toTexture(c);
-    }
-
-    // Grime and chipped paint for painted steel parts
+    // Grime and chipped paint for painted steel
     function makeGrimeTexture() {
       const S = 256;
       const [c, g] = makeCanvas(S, S);
@@ -354,7 +425,7 @@
         g.fillStyle = grd;
         g.fillRect(x - r, y - r, r * 2, r * 2);
       }
-      for (let i = 0; i < 45; i++) {            // rusty drips
+      for (let i = 0; i < 45; i++) {
         const x = rand(0, S), y = rand(0, S), l = rand(20, 90);
         const grd = g.createLinearGradient(x, y, x, y + l);
         grd.addColorStop(0, 'rgba(70,40,20,0.28)');
@@ -362,7 +433,7 @@
         g.fillStyle = grd;
         g.fillRect(x, y, rand(1, 3), l);
       }
-      for (let i = 0; i < 140; i++) {           // chips where bare metal shows
+      for (let i = 0; i < 140; i++) {
         g.fillStyle = `rgba(255,255,255,${rand(0.15, 0.35)})`;
         g.fillRect(rand(0, S), rand(0, S), rand(1, 4), rand(1, 3));
       }
@@ -384,7 +455,7 @@
       return toTexture(c, false);
     }
 
-    // Ribbed black rubber for the belt. It repeats along the belt and scrolls when running.
+    // Ribbed rubber for the belt (repeats, and scrolls when the belt moves)
     function makeBeltTexture() {
       const W = 128, H = 64;
       const [c, g] = makeCanvas(W, H);
@@ -401,7 +472,7 @@
       return toTexture(c);
     }
 
-    // The soda can label: deep red, a cream wave and a little wordmark
+    // The label: deep red, a cream wave and a small wordmark
     function makeLabelTexture() {
       const W = 512, H = 224;
       const [c, g] = makeCanvas(W, H);
@@ -411,8 +482,6 @@
       grd.addColorStop(1, '#8a1118');
       g.fillStyle = grd;
       g.fillRect(0, 0, W, H);
-
-      // cream wave (two full waves so it wraps seamlessly around the can)
       g.fillStyle = '#efe3cc';
       g.beginPath();
       for (let x = 0; x <= W; x += 4) {
@@ -422,25 +491,20 @@
       for (let x = W; x >= 0; x -= 4) g.lineTo(x, H * 0.6 + 17 + Math.sin((x / W) * Math.PI * 4 + 0.6) * 13);
       g.closePath();
       g.fill();
-
-      // pinstripes near the top and bottom
       g.fillStyle = 'rgba(30,5,5,0.55)';
       g.fillRect(0, 9, W, 3);
       g.fillRect(0, H - 12, W, 3);
       g.fillStyle = 'rgba(255,240,220,0.8)';
       g.fillRect(0, 15, W, 1.5);
       g.fillRect(0, H - 17, W, 1.5);
-
-      // wordmark, twice around the can (drawn at x-W and x+W too so it wraps)
+      // Wordmark twice around. These spots end up facing the camera once the label is wrapped on.
       g.font = 'italic 900 58px Georgia, "Times New Roman", serif';
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.fillStyle = '#f7efe0';
-      for (const x of [W * 0.08, W * 0.58]) {
+      for (const x of [W * 0.42, W * 0.92]) {
         for (const dx of [-W, 0, W]) g.fillText('Fizz', x + dx, H * 0.36);
       }
-
-      // tiny bubbles
       for (let i = 0; i < 46; i++) {
         g.fillStyle = `rgba(255,235,220,${rand(0.15, 0.4)})`;
         g.beginPath();
@@ -451,7 +515,7 @@
       return toTexture(c);
     }
 
-    // Streaky texture that scrolls down the pouring stream
+    // Streaks that scroll down the pouring stream
     function makeStreamTexture() {
       const W = 64, H = 256;
       const [c, g] = makeCanvas(W, H);
@@ -470,7 +534,7 @@
       return toTexture(c);
     }
 
-    // Liquid surface seen from above: dark soda in the middle, foam at the edge
+    // The liquid surface from above: dark soda in the middle, foam at the edge
     function makeFoamTexture() {
       const S = 128;
       const [c, g] = makeCanvas(S, S);
@@ -492,7 +556,7 @@
       return toTexture(c);
     }
 
-    // A soft round dot (for splash droplets)
+    // A soft round dot (for splashes)
     function makeDotTexture() {
       const S = 64;
       const [c, g] = makeCanvas(S, S);
@@ -506,7 +570,6 @@
     }
 
     const TEX = {
-      concrete: makeConcreteTexture(),
       grime: makeGrimeTexture(),
       brushed: makeBrushedTexture(),
       belt: makeBeltTexture(),
@@ -515,17 +578,11 @@
       foam: makeFoamTexture(),
       dot: makeDotTexture(),
     };
-    TEX.belt.repeat.set(BELT.length / BELT.textureTile, 1);
+    TEX.belt.repeat.set(BAY / BELT.tile, 1);
     TEX.brushed.repeat.set(2, 2);
 
-    /* =====================================================================
-       6. MATERIALS
-       MeshStandardMaterial = physically based: "roughness" (shiny 0 .. matte 1)
-       and "metalness" (plastic/paint 0 .. metal 1).
-       ===================================================================== */
-
+    // roughness: 0 = mirror .. 1 = matte, metalness: 0 = paint/plastic .. 1 = metal
     const MAT = {
-      concrete: new THREE.MeshStandardMaterial({ map: TEX.concrete, roughness: 0.93, metalness: 0.02 }),
       paint: new THREE.MeshStandardMaterial({ color: 0x52625b, map: TEX.grime, roughness: 0.62, metalness: 0.35 }),
       accent: new THREE.MeshStandardMaterial({ color: 0xb5832a, map: TEX.grime, roughness: 0.55, metalness: 0.3 }),
       brushed: new THREE.MeshStandardMaterial({ color: 0xa4a7ab, roughnessMap: TEX.brushed, roughness: 0.75, metalness: 0.9 }),
@@ -537,21 +594,28 @@
       grip: new THREE.MeshStandardMaterial({ color: 0x161412, roughness: 0.7, metalness: 0.0 }),
       belt: new THREE.MeshStandardMaterial({ map: TEX.belt, bumpMap: TEX.belt, bumpScale: 0.8, roughness: 0.86, metalness: 0.0 }),
       hole: new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 1, metalness: 0 }),
+      red: new THREE.MeshStandardMaterial({ color: 0x8e1c14, roughness: 0.38, metalness: 0.1 }),
+      crate: new THREE.MeshStandardMaterial({ color: 0x5c4630, map: TEX.grime, roughness: 0.8, metalness: 0.05, transparent: true }),
+      staticAlu: new THREE.MeshStandardMaterial({ color: 0xc9ced3, roughness: 0.3, metalness: 1.0, side: THREE.DoubleSide }),
+      labelRoll: new THREE.MeshStandardMaterial({ map: TEX.label, roughness: 0.45, metalness: 0.3 }),
 
-      // Can materials. Each can gets its own copies so it can fade on its own.
+      // Can materials: every can gets its own copies so it can fade by itself
       canAlu: new THREE.MeshStandardMaterial({ color: 0xc9ced3, roughness: 0.28, metalness: 1.0, transparent: true, side: THREE.DoubleSide }),
-      canLabel: new THREE.MeshStandardMaterial({ map: TEX.label, roughness: 0.32, metalness: 0.5, transparent: true }),
+      canBody: new THREE.MeshStandardMaterial({ color: 0xc9ced3, roughness: 0.28, metalness: 1.0, transparent: true }),
       canLid: new THREE.MeshStandardMaterial({ color: 0xb9bec4, roughness: 0.55, metalness: 0.9, transparent: true }),
+      canLabel: new THREE.MeshStandardMaterial({ map: TEX.label, roughness: 0.32, metalness: 0.5, transparent: true }),
       canInner: new THREE.MeshStandardMaterial({ color: 0x80848a, roughness: 0.5, metalness: 1.0, transparent: true, side: THREE.BackSide }),
+      ink: new THREE.MeshStandardMaterial({ color: 0x4a0a0a, roughness: 0.9, metalness: 0, transparent: true, polygonOffset: true, polygonOffsetFactor: -2 }),
       liquid: new THREE.MeshStandardMaterial({ color: 0x7a3a12, roughness: 0.45, metalness: 0.0, emissive: 0x301204 }),
       liquidSurface: new THREE.MeshStandardMaterial({ map: TEX.foam, roughness: 0.3, metalness: 0.0, emissive: 0x120601 }),
+
       stream: new THREE.MeshStandardMaterial({
         color: 0xa24a18, map: TEX.stream, roughness: 0.1, metalness: 0.0, emissive: 0x2e0e03,
         transparent: true, opacity: 0.82, depthWrite: false,
       }),
     };
 
-    // Small helper so building meshes takes one line
+    // One-line mesh helper
     function addMesh(geometry, material, parent, { x = 0, y = 0, z = 0, cast = true, receive = true } = {}) {
       const mesh = new THREE.Mesh(geometry, material);
       mesh.position.set(x, y, z);
@@ -561,8 +625,8 @@
       return mesh;
     }
 
-    // Makes a material fade to black below a certain height. Used for the supports,
-    // which run down into the void "forever" (they're very long and simply disappear).
+    // Makes a material fade to black lower down. Used on the supports that
+    // run down into the void "forever" (they're very long and just disappear).
     function withDepthFade(material, fadeTop, fadeBottom) {
       material.onBeforeCompile = (shader) => {
         shader.uniforms.uFadeTop = { value: fadeTop };
@@ -577,228 +641,460 @@
       return material;
     }
     const fadingPaint = withDepthFade(MAT.paint.clone(), 0.7, -6.5);
-    const SUPPORT_DEPTH = 80; // how far down the supports go (far past what you can see)
+
+    // Invisible shapes you can click (bigger than the real parts, so they're easy to hit)
+    const HIT_MAT = new THREE.MeshBasicMaterial({ visible: false });
+    function makeHit(geometry, parent, x = 0, y = 0, z = 0) {
+      const mesh = new THREE.Mesh(geometry, HIT_MAT);
+      mesh.position.set(x, y, z);
+      parent.add(mesh);
+      return mesh;
+    }
 
     /* =====================================================================
-       7. THE CONVEYOR BELT
-       Everything here lives in one group (tilted by BELT.angle, which is 0 = flat).
-       Inside that group: x runs along the belt (0 = start, BELT.length = the drop-off end),
-       y is "up" from the roller axles, z is across the belt.
+       5. CAN SHAPES (shared by every can). Heights measured from the base.
        ===================================================================== */
 
-    const conveyor = new THREE.Group();
-    conveyor.position.copy(BELT.start);
-    conveyor.rotation.z = BELT.angle;
-    scene.add(conveyor);
-
-    const rollers = []; // the spinning parts
-
-    {
-      const L = BELT.length, R = BELT.rollerRadius, W = BELT.width, T = BELT.thickness;
-
-      // Top run of the belt (this is where the texture scrolls)
-      addMesh(new THREE.BoxGeometry(L, T, W), MAT.belt, conveyor, { x: L / 2, y: R + T / 2 });
-      // Bottom return run
-      addMesh(new THREE.BoxGeometry(L, T, W), MAT.rubber, conveyor, { x: L / 2, y: -(R + T / 2) });
-      // Half-tubes where the belt wraps around each roller
-      const wrap = (x, thetaStart) => {
-        const geo = new THREE.CylinderGeometry(R + T, R + T, W, 28, 1, true, thetaStart, Math.PI);
-        geo.rotateX(Math.PI / 2);
-        addMesh(geo, MAT.rubber, conveyor, { x });
+    const CAN_GEO = (() => {
+      const r = CAN.radius;
+      return {
+        bottomRing: new THREE.CylinderGeometry(r, 0.175, 0.06, 40, 1, true).translate(0, 0.03, 0),
+        bottomCap: new THREE.CircleGeometry(0.175, 32).rotateX(Math.PI / 2).translate(0, 0.003, 0),
+        body: new THREE.CylinderGeometry(r, r, 0.62, 48, 1, true).translate(0, 0.37, 0),
+        // The label is a slightly bigger tube; it's revealed one slice at a time as it wraps on.
+        // Turned half a turn so the first slice starts at the back, where the label roll touches.
+        labelBand: new THREE.CylinderGeometry(r + 0.003, r + 0.003, 0.56, 48, 1, true).translate(0, 0.37, 0).rotateY(Math.PI),
+        shoulder: new THREE.CylinderGeometry(0.185, r, 0.09, 48, 1, true).translate(0, 0.725, 0),
+        neck: new THREE.CylinderGeometry(0.185, 0.185, 0.03, 48, 1, true).translate(0, 0.785, 0),
+        rim: new THREE.TorusGeometry(0.185, 0.011, 8, 48).rotateX(Math.PI / 2).translate(0, 0.8, 0),
+        inner: new THREE.CylinderGeometry(0.219, 0.219, 0.62, 32, 1, true).translate(0, 0.37, 0),
+        innerBottom: new THREE.CircleGeometry(0.219, 32).rotateX(Math.PI / 2).translate(0, 0.065, 0),
+        liquid: new THREE.CylinderGeometry(0.213, 0.213, 0.6, 32).translate(0, 0.37, 0),
+        surface: new THREE.CircleGeometry(0.213, 40).rotateX(-Math.PI / 2),
+        lid: new THREE.CylinderGeometry(0.19, 0.19, 0.016, 40).translate(0, 0.008, 0),
+        lidRing: new THREE.TorusGeometry(0.168, 0.007, 6, 40).rotateX(Math.PI / 2).translate(0, 0.017, 0),
+        tab: new RoundedBoxGeometry(0.11, 0.008, 0.055, 2, 0.003).translate(0.035, 0.021, 0),
+        rivet: new THREE.CylinderGeometry(0.012, 0.012, 0.01, 12).translate(0, 0.02, 0),
+        mark: new THREE.PlaneGeometry(0.1, 0.05).rotateX(-Math.PI / 2),
       };
-      wrap(0, Math.PI);
-      wrap(L, 0);
+    })();
+    const LABEL_SLICES = 48;
 
-      // Rollers: a drum, an axle, and hub caps with a little arm so you can see them spin
-      const drumGeo = new THREE.CylinderGeometry(R, R, W + 0.04, 32).rotateX(Math.PI / 2);
-      const axleGeo = new THREE.CylinderGeometry(0.035, 0.035, W + 0.36, 12).rotateX(Math.PI / 2);
-      const hubGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.04, 6).rotateX(Math.PI / 2);
-      const armGeo = new THREE.BoxGeometry(0.17, 0.035, 0.015);
-      for (const x of [0, L]) {
-        const roller = new THREE.Group();
-        roller.position.x = x;
-        addMesh(drumGeo, MAT.brushed, roller);
-        addMesh(axleGeo, MAT.chrome, roller);
-        for (const side of [-1, 1]) {
-          addMesh(hubGeo, MAT.darkSteel, roller, { z: side * (W / 2 + 0.13) });
-          addMesh(armGeo, MAT.accent, roller, { z: side * (W / 2 + 0.157) });
-        }
-        conveyor.add(roller);
-        rollers.push(roller);
-      }
+    function makeLidMesh(material) {
+      const g = new THREE.Group();
+      for (const geo of [CAN_GEO.lid, CAN_GEO.lidRing, CAN_GEO.tab, CAN_GEO.rivet]) addMesh(geo, material, g);
+      return g;
+    }
 
-      // Side rails (frame) along both edges
-      const railGeo = new THREE.BoxGeometry(L + 0.6, 0.36, 0.04);
-      for (const side of [-1, 1]) addMesh(railGeo, MAT.paint, conveyor, { x: L / 2, y: -0.02, z: side * 0.58 });
+    // A plain decorative can (the spares waiting in the magazine)
+    function makeStaticCan() {
+      const g = new THREE.Group();
+      const parts = [CAN_GEO.bottomRing, CAN_GEO.bottomCap, CAN_GEO.body, CAN_GEO.shoulder, CAN_GEO.neck, CAN_GEO.rim];
+      for (const geo of parts) addMesh(geo, MAT.staticAlu, g);
+      return g;
+    }
 
-      // Thin chrome guide bars that keep the cans in line
-      const guideY = BELT_TOP + 0.32, guideZ = CAN.radius + 0.1;
-      const guideStart = 0.25, guideEnd = L - 0.4;
-      const guideGeo = new THREE.CylinderGeometry(0.012, 0.012, guideEnd - guideStart, 8).rotateZ(Math.PI / 2);
-      const postGeo = new THREE.BoxGeometry(0.03, guideY - 0.14, 0.03);
-      const postArmGeo = new THREE.BoxGeometry(0.025, 0.025, 0.58 - guideZ);
+    /* =====================================================================
+       6. THE LINE: belt sections, rollers and supports
+       One belt section per station. Buying a station adds a section, which
+       rises out of the dark, and the end roller slides along to the new end.
+       ===================================================================== */
+
+    const R = BELT.rollerRadius, T = BELT.thickness, W = BELT.width;
+    const GUIDE_Y = SURFACE + 0.32;           // height of the thin guide bars
+    const GUIDE_Z = CAN.radius + 0.1;
+    const RAIL_TOP = BELT.y + 0.16;
+
+    function halfTube(thetaStart) {
+      return new THREE.CylinderGeometry(R + T, R + T, W, 28, 1, true, thetaStart, Math.PI).rotateX(Math.PI / 2);
+    }
+
+    const GEO = {
+      beltRun: new THREE.BoxGeometry(BAY, T, W),
+      rail: new THREE.BoxGeometry(BAY, 0.36, 0.04),
+      railStub: new THREE.BoxGeometry(0.34, 0.36, 0.04),
+      guide: new THREE.CylinderGeometry(0.012, 0.012, BAY, 8).rotateZ(Math.PI / 2),
+      guidePost: new THREE.BoxGeometry(0.03, GUIDE_Y - RAIL_TOP + 0.02, 0.03),
+      guideArm: new THREE.BoxGeometry(0.025, 0.025, 0.58 - GUIDE_Z),
+      leg: new THREE.BoxGeometry(0.08, SUPPORT_DEPTH, 0.08),
+      brace: new THREE.BoxGeometry(0.05, 0.05, 1.16),
+      wrapStart: halfTube(Math.PI),
+      wrapEnd: halfTube(0),
+      drum: new THREE.CylinderGeometry(R, R, W + 0.04, 32).rotateX(Math.PI / 2),
+      axle: new THREE.CylinderGeometry(0.035, 0.035, W + 0.36, 12).rotateX(Math.PI / 2),
+      hub: new THREE.CylinderGeometry(0.1, 0.1, 0.04, 6).rotateX(Math.PI / 2),
+      hubArm: new THREE.BoxGeometry(0.17, 0.035, 0.015),
+      gusset: new THREE.BoxGeometry(0.06, 0.06, 0.42),
+    };
+
+    const line = new THREE.Group();
+    scene.add(line);
+    const rollers = [];   // spin when the belt moves
+    const segments = [];  // belt section for each station
+
+    // A pair of legs running down into the dark, with cross braces
+    function addLegs(parent, x) {
+      const top = BELT.y - 0.2;
+      for (const side of [-1, 1]) addMesh(GEO.leg, fadingPaint, parent, { x, y: top - SUPPORT_DEPTH / 2, z: side * 0.58 });
+      for (let y = top - 0.9; y > -10; y -= 2.4) addMesh(GEO.brace, fadingPaint, parent, { x, y });
+    }
+
+    function buildSegment(i) {
+      const g = new THREE.Group();
+      const x = bayX(i);
+      addMesh(GEO.beltRun, MAT.belt, g, { x, y: BELT.y + R + T / 2 });           // top of the belt
+      addMesh(GEO.beltRun, MAT.rubber, g, { x, y: BELT.y - R - T / 2 });         // return underneath
       for (const side of [-1, 1]) {
-        addMesh(guideGeo, MAT.guide, conveyor, { x: (guideStart + guideEnd) / 2, y: guideY, z: side * guideZ });
-        for (let s = guideStart + 0.3; s < guideEnd; s += 1.25) {
-          addMesh(postGeo, MAT.darkSteel, conveyor, { x: s, y: 0.14 + (guideY - 0.14) / 2, z: side * 0.58 });
-          addMesh(postArmGeo, MAT.darkSteel, conveyor, { x: s, y: guideY, z: side * (guideZ + (0.58 - guideZ) / 2) });
-        }
+        addMesh(GEO.rail, MAT.paint, g, { x, y: BELT.y - 0.02, z: side * 0.58 });
+        if (side < 0 && i === ST.LABEL) continue; // the label roll sits behind the belt here
+        addMesh(GEO.guide, MAT.guide, g, { x, y: GUIDE_Y, z: side * GUIDE_Z });
+        const px = x - BAY / 2 + 0.3;
+        addMesh(GEO.guidePost, MAT.darkSteel, g, { x: px, y: (GUIDE_Y + RAIL_TOP) / 2, z: side * 0.58 });
+        addMesh(GEO.guideArm, MAT.darkSteel, g, { x: px, y: GUIDE_Y, z: side * (GUIDE_Z + (0.58 - GUIDE_Z) / 2) });
       }
+      addLegs(g, x - BAY / 2 + 0.5);
+      line.add(g);
+      return g;
+    }
 
-      // Motor that drives the first roller (on the back side)
+    function makeRoller(parent, x) {
+      const roller = new THREE.Group();
+      roller.position.set(x, BELT.y, 0);
+      addMesh(GEO.drum, MAT.brushed, roller);
+      addMesh(GEO.axle, MAT.chrome, roller);
+      for (const side of [-1, 1]) {
+        addMesh(GEO.hub, MAT.darkSteel, roller, { z: side * (W / 2 + 0.13) });
+        addMesh(GEO.hubArm, MAT.accent, roller, { z: side * (W / 2 + 0.157) });
+      }
+      parent.add(roller);
+      rollers.push(roller);
+      return roller;
+    }
+
+    // Start of the line: roller, belt wrap and the motor
+    const startCap = new THREE.Group();
+    line.add(startCap);
+    {
+      addMesh(GEO.wrapStart, MAT.rubber, startCap, { x: START_X, y: BELT.y });
+      makeRoller(startCap, START_X);
+      for (const side of [-1, 1]) addMesh(GEO.railStub, MAT.paint, startCap, { x: START_X - 0.12, y: BELT.y - 0.02, z: side * 0.58 });
       const motor = new THREE.Group();
-      motor.position.set(0, -0.02, -0.92);
+      motor.position.set(START_X, BELT.y - 0.02, -0.92);
       addMesh(new THREE.CylinderGeometry(0.2, 0.2, 0.44, 28).rotateX(Math.PI / 2), MAT.paint, motor);
       addMesh(new THREE.CylinderGeometry(0.21, 0.21, 0.04, 28).rotateX(Math.PI / 2), MAT.darkSteel, motor, { z: -0.23 });
       const finGeo = new THREE.BoxGeometry(0.44, 0.02, 0.36);
       for (let i = 0; i < 6; i++) {
         const fin = addMesh(finGeo, MAT.paint, motor);
         fin.rotation.z = (i / 6) * Math.PI;
-        fin.scale.set(0.98, 1, 1);
       }
-      addMesh(new RoundedBoxGeometry(0.2, 0.12, 0.16, 2, 0.02), MAT.darkSteel, motor, { y: 0.22 }); // junction box
-      conveyor.add(motor);
+      addMesh(new RoundedBoxGeometry(0.2, 0.12, 0.16, 2, 0.02), MAT.darkSteel, motor, { y: 0.22 });
+      startCap.add(motor);
     }
 
-    // Supports: legs that run straight down into the darkness and fade away
-    conveyor.updateMatrixWorld(true);
-    {
-      const legGeo = new THREE.BoxGeometry(0.08, SUPPORT_DEPTH, 0.08);
-      const braceGeo = new THREE.BoxGeometry(0.05, 0.05, 1.16);
-      for (const s of [0.6, BELT.length - 0.6]) {
-        let top;
-        for (const side of [-1, 1]) {
-          top = conveyor.localToWorld(new THREE.Vector3(s, -0.2, side * 0.58));
-          addMesh(legGeo, fadingPaint, scene, { x: top.x, y: top.y - SUPPORT_DEPTH / 2, z: top.z });
-        }
-        // cross braces every so often, disappearing with the legs
-        for (let y = top.y - 0.9; y > -10; y -= 2.4) addMesh(braceGeo, fadingPaint, scene, { x: top.x, y });
-      }
-    }
+    // End of the line: roller and belt wrap. This group slides when the line grows.
+    const endCap = new THREE.Group();
+    line.add(endCap);
+    addMesh(GEO.wrapEnd, MAT.rubber, endCap, { y: BELT.y });
+    makeRoller(endCap, 0);
+    for (const side of [-1, 1]) addMesh(GEO.railStub, MAT.paint, endCap, { x: 0.12, y: BELT.y - 0.02, z: side * 0.58 });
+    let endCapTarget = 0;
 
-    // Called every frame: scroll the belt texture and spin the rollers at `speed`
-    function updateConveyor(speed, dt) {
-      TEX.belt.offset.x -= (speed * dt) / BELT.textureTile;
-      for (const roller of rollers) roller.rotation.z -= (speed * dt) / BELT.rollerRadius;
+    // New parts rise up out of the dark
+    const risers = [];
+    function riseUp(obj, delay = 0, baseY = 0) {
+      obj.visible = true;
+      obj.position.y = baseY - 6;
+      risers.push({ obj, t: -delay, baseY });
+    }
+    function updateRisers(dt) {
+      for (let i = risers.length - 1; i >= 0; i--) {
+        const r = risers[i];
+        r.t += dt;
+        const k = clamp01(r.t / 1.8);
+        r.obj.position.y = r.baseY - 6 * (1 - Ease.outCubic(k));
+        if (k >= 1) risers.splice(i, 1);
+      }
     }
 
     /* =====================================================================
-       8. THE FILLING STATION (column, arm, housing, nozzle, indicator lamp)
+       7. STATIONS
+       Each builder returns { group, ...the parts that move or can be clicked }.
        ===================================================================== */
 
-    // Work out where things go, based on where a can stands under the nozzle
-    const STATION = (() => {
-      const base = conveyor.localToWorld(new THREE.Vector3(SPOT.fill, BELT_TOP, 0)); // can's base point
-      const canUp = new THREE.Vector3(-Math.sin(BELT.angle), Math.cos(BELT.angle), 0); // cans tilt with the belt
-      const opening = base.clone().addScaledVector(canUp, CAN.height);                  // centre of the can's top
-      const nozzleLength = 0.24;
-      const nozzleTip = new THREE.Vector3(opening.x, opening.y + 0.3, 0);
-      const housingBottom = nozzleTip.y + nozzleLength;
-      const housingSize = new THREE.Vector3(0.66, 0.5, 0.58);
-      const housingCenter = new THREE.Vector3(opening.x, housingBottom + housingSize.y / 2, 0);
-      const armY = housingBottom + housingSize.y + 0.09;
-      return { x: opening.x, opening, nozzleTip, nozzleLength, housingBottom, housingSize, housingCenter, armY };
-    })();
-
-    const station = new THREE.Group();
-    scene.add(station);
-
-    let nozzleSpout;           // moves up/down a little while pouring
-    let lampMaterial, lampLight;
-
-    {
-      const { x, armY, housingCenter: hc, housingSize: hs, housingBottom, nozzleLength } = STATION;
-
-      // Column behind the belt, and an arm reaching over it
-      const columnTop = armY + 0.09;
-      addMesh(new THREE.BoxGeometry(0.24, columnTop + SUPPORT_DEPTH, 0.24), fadingPaint, station,
-        { x, y: (columnTop - SUPPORT_DEPTH) / 2, z: -1.0 });
-      addMesh(new THREE.BoxGeometry(0.2, 0.18, 1.22), MAT.paint, station, { x, y: armY, z: -0.45 });
-      const gusset = addMesh(new THREE.BoxGeometry(0.06, 0.06, 0.42), MAT.paint, station, { x, y: armY - 0.18, z: -0.78 });
+    // A support column behind the belt (running down into the dark) and an arm over the belt
+    function addColumnAndArm(group, x, armY, armEndZ) {
+      const top = armY + 0.09;
+      addMesh(new THREE.BoxGeometry(0.24, top + SUPPORT_DEPTH, 0.24), fadingPaint, group, { x, y: (top - SUPPORT_DEPTH) / 2, z: -1.0 });
+      const len = armEndZ + 1.06;
+      addMesh(new THREE.BoxGeometry(0.2, 0.18, len), MAT.paint, group, { x, y: armY, z: -1.06 + len / 2 });
+      const gusset = addMesh(GEO.gusset, MAT.paint, group, { x, y: armY - 0.18, z: -0.78 });
       gusset.rotation.x = deg(-45);
+    }
 
-      // Housing
-      addMesh(new RoundedBoxGeometry(hs.x, hs.y, hs.z, 3, 0.04), MAT.paint, station, { x: hc.x, y: hc.y, z: hc.z });
+    // --- 7a. DROP: a magazine of empty cans, its pull chain, and the belt's push button
+    const MAG_BOTTOM = CAN_TOP + 0.2;                           // cans drop from here
+    const CHAIN_TOP = new THREE.Vector3(bayX(ST.DROP) + 0.62, 2.95, 0.92);
+    let runButton, runButtonBaseY, runLampMat, powerLedMat;
+
+    function buildDispenser() {
+      const g = new THREE.Group();
+      const x = bayX(ST.DROP);
+      const magH = 1.75;
+      addColumnAndArm(g, x, MAG_BOTTOM + 1.25, -0.27);
+      const rodGeo = new THREE.CylinderGeometry(0.014, 0.014, magH, 8);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        addMesh(rodGeo, MAT.chrome, g, { x: x + sx * 0.27, y: MAG_BOTTOM + magH / 2, z: sz * 0.27 });
+      }
+      const ringGeo = new THREE.TorusGeometry(0.382, 0.018, 6, 4).rotateX(Math.PI / 2).rotateY(Math.PI / 4); // square ring
+      for (const y of [MAG_BOTTOM, MAG_BOTTOM + magH * 0.55, MAG_BOTTOM + magH]) addMesh(ringGeo, MAT.darkSteel, g, { x, y });
+      for (const y of [MAG_BOTTOM + 0.04, MAG_BOTTOM + 0.88]) {
+        const spare = makeStaticCan();
+        spare.position.set(x, y, 0);
+        g.add(spare);
+      }
+
+      // Switch box the chain hangs from, on a bracket off the magazine
+      const box = CHAIN_TOP.clone().add(new THREE.Vector3(0, 0.1, 0));
+      addMesh(new RoundedBoxGeometry(0.18, 0.2, 0.18, 2, 0.025), MAT.paint, g, { x: box.x, y: box.y, z: box.z });
+      addMesh(new THREE.TorusGeometry(0.022, 0.008, 6, 16).rotateX(Math.PI / 2), MAT.darkSteel, g, { x: CHAIN_TOP.x, y: CHAIN_TOP.y, z: CHAIN_TOP.z });
+      powerLedMat = new THREE.MeshStandardMaterial({ color: 0x0b2a12, emissive: 0x4dff7a, emissiveIntensity: 2.2 });
+      addMesh(new THREE.SphereGeometry(0.014, 12, 8), powerLedMat, g, { x: box.x, y: box.y + 0.05, z: box.z + 0.092, cast: false });
+      const from = new THREE.Vector3(x + 0.27, box.y, 0.27);
+      const bracket = addMesh(new THREE.BoxGeometry(0.05, 0.05, from.distanceTo(box)), MAT.darkSteel, g);
+      bracket.position.copy(from).lerp(box, 0.5);
+      bracket.lookAt(box);
+
+      // Control box with the push button that moves the belt one station
+      const cb = new THREE.Vector3(x - 0.78, SURFACE - 0.02, 0.9);
+      addMesh(new RoundedBoxGeometry(0.34, 0.2, 0.28, 2, 0.03), MAT.paint, g, { x: cb.x, y: cb.y, z: cb.z });
+      addMesh(new THREE.BoxGeometry(0.05, 0.05, 0.3), MAT.darkSteel, g, { x: cb.x, y: cb.y - 0.05, z: 0.74 });
+      addMesh(new THREE.BoxGeometry(0.05, SUPPORT_DEPTH, 0.05), fadingPaint, g, { x: cb.x, y: cb.y - 0.1 - SUPPORT_DEPTH / 2, z: cb.z });
+      addMesh(new THREE.CylinderGeometry(0.078, 0.082, 0.03, 24), MAT.darkSteel, g, { x: cb.x - 0.04, y: cb.y + 0.115, z: cb.z });
+      runButton = new THREE.Group();
+      runButtonBaseY = cb.y + 0.13;
+      runButton.position.set(cb.x - 0.04, runButtonBaseY, cb.z);
+      addMesh(new THREE.CylinderGeometry(0.064, 0.064, 0.045, 24).translate(0, 0.0225, 0), MAT.red, runButton);
+      g.add(runButton);
+      runLampMat = new THREE.MeshStandardMaterial({ color: 0x1a2a10, emissive: 0x9dff6a, emissiveIntensity: 0.05, roughness: 0.3 });
+      addMesh(new THREE.SphereGeometry(0.022, 12, 8), runLampMat, g, { x: cb.x + 0.11, y: cb.y + 0.11, z: cb.z - 0.06, cast: false });
+      const runHit = makeHit(new THREE.SphereGeometry(0.18, 10, 8), g, cb.x - 0.04, cb.y + 0.15, cb.z);
+
+      line.add(g);
+      return { group: g, runHit };
+    }
+
+    // --- 7b. FILL: housing, nozzle, lamp, and the valve lever you hold to pour
+    const FILL = (() => {
+      const x = bayX(ST.FILL);
+      const nozzleLength = 0.24;
+      const tipY = CAN_TOP + 0.3;
+      const housingBottom = tipY + nozzleLength;
+      const hs = new THREE.Vector3(0.66, 0.5, 0.58);
+      const hc = new THREE.Vector3(x, housingBottom + hs.y / 2, 0);
+      return { x, nozzleLength, tipY, housingBottom, hs, hc, armY: housingBottom + hs.y + 0.09 };
+    })();
+    let nozzleSpout, fillLampMat, fillLampLight, valveLever;
+
+    function buildFiller() {
+      const g = new THREE.Group();
+      const { x, hs, hc, housingBottom, nozzleLength, armY } = FILL;
+      addColumnAndArm(g, x, armY, 0.16);
+
+      addMesh(new RoundedBoxGeometry(hs.x, hs.y, hs.z, 3, 0.04), MAT.paint, g, { x: hc.x, y: hc.y, z: hc.z });
       const front = hc.z + hs.z / 2;
-      addMesh(new THREE.BoxGeometry(0.24, 0.07, 0.008), MAT.accent, station, { x: x + 0.12, y: hc.y + 0.11, z: front + 0.004 });
+      addMesh(new THREE.BoxGeometry(0.24, 0.07, 0.008), MAT.accent, g, { x: x + 0.12, y: hc.y + 0.11, z: front + 0.004 });
       const ventGeo = new THREE.BoxGeometry(0.34, 0.012, 0.008);
-      for (let i = 0; i < 4; i++) addMesh(ventGeo, MAT.hole, station, { x: x + 0.04, y: hc.y - 0.06 - i * 0.04, z: front + 0.002, cast: false });
+      for (let i = 0; i < 4; i++) addMesh(ventGeo, MAT.hole, g, { x: x + 0.04, y: hc.y - 0.06 - i * 0.04, z: front + 0.002, cast: false });
       const screwGeo = new THREE.CylinderGeometry(0.012, 0.012, 0.01, 8).rotateX(Math.PI / 2);
       for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
-        addMesh(screwGeo, MAT.darkSteel, station, { x: x + sx * 0.28, y: hc.y + sy * 0.2, z: front + 0.004, cast: false });
+        addMesh(screwGeo, MAT.darkSteel, g, { x: x + sx * 0.28, y: hc.y + sy * 0.2, z: front + 0.004, cast: false });
       }
 
-      // Nozzle: a fixed collar plus a spout that can slide a little
-      addMesh(new THREE.CylinderGeometry(0.075, 0.085, 0.06, 24), MAT.darkSteel, station, { x, y: housingBottom - 0.03 });
-      const spoutGroup = new THREE.Group();
-      spoutGroup.position.set(x, housingBottom, 0);
+      // Nozzle: fixed collar + a spout that dips a little while pouring
+      addMesh(new THREE.CylinderGeometry(0.075, 0.085, 0.06, 24), MAT.darkSteel, g, { x, y: housingBottom - 0.03 });
+      nozzleSpout = new THREE.Group();
+      nozzleSpout.position.set(x, housingBottom, 0);
       const spoutLength = nozzleLength + 0.04;
-      addMesh(new THREE.CylinderGeometry(0.042, 0.028, spoutLength, 20), MAT.chrome, spoutGroup, { y: 0.04 - spoutLength / 2 });
-      addMesh(new THREE.TorusGeometry(0.029, 0.006, 6, 20).rotateX(Math.PI / 2), MAT.chrome, spoutGroup, { y: -nozzleLength });
-      station.add(spoutGroup);
-      nozzleSpout = spoutGroup;
+      addMesh(new THREE.CylinderGeometry(0.042, 0.028, spoutLength, 20), MAT.chrome, nozzleSpout, { y: 0.04 - spoutLength / 2 });
+      addMesh(new THREE.TorusGeometry(0.029, 0.006, 6, 20).rotateX(Math.PI / 2), MAT.chrome, nozzleSpout, { y: -nozzleLength });
+      g.add(nozzleSpout);
 
-      // Indicator lamp on the front of the housing
+      // Amber lamp: glows while pouring
       const lx = x - 0.17, ly = hc.y + 0.1;
-      addMesh(new THREE.CylinderGeometry(0.07, 0.07, 0.035, 24).rotateX(Math.PI / 2), MAT.darkSteel, station, { x: lx, y: ly, z: front + 0.0175 });
-      lampMaterial = new THREE.MeshStandardMaterial({
-        color: 0x3a1a06, emissive: 0xff8c2e, emissiveIntensity: 0.03, roughness: 0.25, metalness: 0,
-      });
-      addMesh(new THREE.SphereGeometry(0.05, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI / 2), lampMaterial, station,
+      addMesh(new THREE.CylinderGeometry(0.07, 0.07, 0.035, 24).rotateX(Math.PI / 2), MAT.darkSteel, g, { x: lx, y: ly, z: front + 0.0175 });
+      fillLampMat = new THREE.MeshStandardMaterial({ color: 0x3a1a06, emissive: 0xff8c2e, emissiveIntensity: 0.03, roughness: 0.25, metalness: 0 });
+      addMesh(new THREE.SphereGeometry(0.05, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI / 2), fillLampMat, g,
         { x: lx, y: ly, z: front + 0.034, cast: false });
-      lampLight = new THREE.PointLight(0xff9a40, 0, 3, 2);
-      lampLight.position.set(lx, ly, front + 0.16);
-      station.add(lampLight);
+      fillLampLight = new THREE.PointLight(0xff9a40, 0, 3, 2);
+      fillLampLight.position.set(lx, ly, front + 0.16);
+      g.add(fillLampLight);
+
+      // Valve lever on the right side of the housing (tips down while held)
+      valveLever = new THREE.Group();
+      valveLever.position.set(x + hs.x / 2 + 0.03, hc.y - 0.06, 0.08);
+      addMesh(new THREE.CylinderGeometry(0.045, 0.045, 0.05, 16).rotateZ(Math.PI / 2), MAT.darkSteel, valveLever);
+      addMesh(new THREE.BoxGeometry(0.035, 0.035, 0.34), MAT.chrome, valveLever, { z: 0.17 });
+      addMesh(new THREE.SphereGeometry(0.05, 16, 10), MAT.red, valveLever, { z: 0.36 });
+      const valveHit = makeHit(new THREE.SphereGeometry(0.2, 10, 8), valveLever, 0, 0, 0.3);
+      g.add(valveLever);
+
+      line.add(g);
+      return { group: g, valveHit };
+    }
+
+    // --- 7c. CAP: a press with a knob on top. Pull the knob down to press a lid on.
+    const CAPPER = (() => {
+      const travel = 0.4;
+      const armY = 3.0;
+      return { x: bayX(ST.CAP), travel, armY, headBottom: CAN_TOP + 0.016 + travel, knobY: armY + 0.66 };
+    })();
+    let pressMove, heldLid;
+
+    function buildCapper() {
+      const g = new THREE.Group();
+      const { x, headBottom, armY, knobY } = CAPPER;
+      addColumnAndArm(g, x, armY, 0.13);
+      addMesh(new RoundedBoxGeometry(0.28, 0.24, 0.28, 2, 0.03), MAT.paint, g, { x, y: armY });
+      pressMove = new THREE.Group(); // everything that slides down together
+      const headTop = headBottom + 0.1;
+      addMesh(new THREE.CylinderGeometry(0.2, 0.21, 0.1, 28), MAT.darkSteel, pressMove, { x, y: headBottom + 0.05 });
+      const rodLen = knobY - headTop;
+      addMesh(new THREE.CylinderGeometry(0.026, 0.026, rodLen, 12), MAT.chrome, pressMove, { x, y: headTop + rodLen / 2 });
+      addMesh(new THREE.SphereGeometry(0.075, 18, 12), MAT.grip, pressMove, { x, y: knobY });
+      heldLid = makeLidMesh(MAT.staticAlu); // the next lid, held under the press head
+      heldLid.position.set(x, headBottom - 0.016, 0);
+      pressMove.add(heldLid);
+      const knobHit = makeHit(new THREE.SphereGeometry(0.22, 10, 8), pressMove, x, knobY, 0);
+      g.add(pressMove);
+      line.add(g);
+      return { group: g, knobHit };
+    }
+
+    // --- 7d. LABEL: a roll of labels behind the can. Hold it to wrap a label on.
+    const LABELER = { x: bayX(ST.LABEL), rollZ: -0.45, rollY: SURFACE + 0.37, armY: 3.0 };
+    let labelRoll, labelCrank;
+
+    function buildLabeler() {
+      const g = new THREE.Group();
+      const { x, rollZ, rollY, armY } = LABELER;
+      addColumnAndArm(g, x, armY, rollZ + 0.12);
+      const spindleBottom = rollY + 0.26;
+      addMesh(new THREE.CylinderGeometry(0.022, 0.022, armY - spindleBottom, 10), MAT.chrome, g, { x, y: (armY + spindleBottom) / 2, z: rollZ });
+      labelRoll = new THREE.Group();
+      labelRoll.position.set(x, rollY, rollZ);
+      addMesh(new THREE.CylinderGeometry(0.17, 0.17, 0.5, 36), MAT.labelRoll, labelRoll);
+      for (const s of [-1, 1]) addMesh(new THREE.CylinderGeometry(0.19, 0.19, 0.02, 36), MAT.darkSteel, labelRoll, { y: s * 0.26 });
+      g.add(labelRoll);
+      labelCrank = new THREE.Group();
+      labelCrank.position.set(x, armY + 0.12, rollZ);
+      addMesh(new THREE.CylinderGeometry(0.05, 0.05, 0.06, 16), MAT.darkSteel, labelCrank);
+      addMesh(new THREE.BoxGeometry(0.26, 0.03, 0.045), MAT.paint, labelCrank, { x: 0.13 });
+      addMesh(new THREE.CylinderGeometry(0.028, 0.028, 0.14, 12), MAT.grip, labelCrank, { x: 0.26, y: 0.08 });
+      g.add(labelCrank);
+      const hits = [
+        makeHit(new THREE.SphereGeometry(0.34, 10, 8), g, x, rollY, rollZ),
+        makeHit(new THREE.SphereGeometry(0.3, 10, 8), g, x + 0.13, armY + 0.15, rollZ),
+      ];
+      line.add(g);
+      return { group: g, hits };
+    }
+
+    // --- 7e. STAMP: a stamp that slams down onto the lid when you hit its button
+    const STAMPER = (() => {
+      const travel = 0.32;
+      return { x: bayX(ST.STAMP), travel, armY: 3.0, headBottom: CAN_TOP + 0.016 + travel };
+    })();
+    let stampMove, stampButton, stampButtonBaseY;
+
+    function buildStamper() {
+      const g = new THREE.Group();
+      const { x, headBottom, armY } = STAMPER;
+      addColumnAndArm(g, x, armY, 0.13);
+      addMesh(new THREE.CylinderGeometry(0.14, 0.14, 0.4, 24), MAT.paint, g, { x, y: armY - 0.02 });
+      stampMove = new THREE.Group();
+      const headTop = headBottom + 0.07;
+      const rodLen = armY + 0.1 - headTop; // long enough to stay inside the housing at full stroke
+      addMesh(new THREE.CylinderGeometry(0.03, 0.03, rodLen, 12), MAT.chrome, stampMove, { x, y: headTop + rodLen / 2 });
+      addMesh(new RoundedBoxGeometry(0.2, 0.07, 0.2, 2, 0.015), MAT.darkSteel, stampMove, { x, y: headBottom + 0.047 });
+      addMesh(new THREE.BoxGeometry(0.16, 0.012, 0.16), MAT.ink, stampMove, { x, y: headBottom + 0.006 });
+      g.add(stampMove);
+
+      // Button box on the front
+      const by = armY - 0.05, bz = 0.3;
+      addMesh(new RoundedBoxGeometry(0.2, 0.16, 0.16, 2, 0.025), MAT.paint, g, { x, y: by, z: bz });
+      addMesh(new THREE.BoxGeometry(0.05, 0.05, 0.2), MAT.darkSteel, g, { x, y: by, z: 0.15 });
+      stampButton = new THREE.Group();
+      stampButtonBaseY = by + 0.08;
+      stampButton.position.set(x, stampButtonBaseY, bz);
+      addMesh(new THREE.CylinderGeometry(0.06, 0.06, 0.04, 20).translate(0, 0.02, 0), MAT.red, stampButton);
+      g.add(stampButton);
+      const hits = [
+        makeHit(new THREE.SphereGeometry(0.2, 10, 8), g, x, by + 0.08, bz),
+        makeHit(new THREE.SphereGeometry(0.26, 10, 8), g, x, armY - 0.1, 0),
+      ];
+      line.add(g);
+      return { group: g, hits };
+    }
+
+    // --- 7f. CRATE: sits past the end of the belt and catches six cans. Shove it off to sell.
+    const CRATE_OFF = 1.05;               // crate centre, measured from the end roller
+    const SHELF_Y = SURFACE - 0.6;        // top of the shelf the crate sits on
+    let crateTray, crateHit;
+
+    function buildCrate() {
+      const g = new THREE.Group();
+      addMesh(new THREE.BoxGeometry(1.74, 0.04, 1.18), MAT.darkSteel, g, { x: CRATE_OFF, y: SHELF_Y - 0.02 });
+      addMesh(new THREE.BoxGeometry(0.08, SUPPORT_DEPTH, 0.08), fadingPaint, g, { x: CRATE_OFF, y: SHELF_Y - 0.04 - SUPPORT_DEPTH / 2 });
+      // two struts back to the belt frame
+      const sx0 = 0.12, sy0 = BELT.y - 0.2, sx1 = CRATE_OFF - 0.7, sy1 = SHELF_Y - 0.04;
+      const len = Math.hypot(sx1 - sx0, sy1 - sy0);
+      for (const z of [-0.5, 0.5]) {
+        const strut = addMesh(new THREE.BoxGeometry(len, 0.045, 0.045), MAT.darkSteel, g, { x: (sx0 + sx1) / 2, y: (sy0 + sy1) / 2, z });
+        strut.rotation.z = Math.atan2(sy1 - sy0, sx1 - sx0);
+      }
+
+      crateTray = new THREE.Group(); // the part that gets shoved off
+      crateTray.position.set(CRATE_OFF, SHELF_Y, 0);
+      const m = MAT.crate;
+      addMesh(new THREE.BoxGeometry(1.56, 0.03, 1.04), m, crateTray, { y: 0.015 });
+      for (const z of [-0.505, 0.505]) addMesh(new THREE.BoxGeometry(1.56, 0.24, 0.03), m, crateTray, { y: 0.12, z });
+      for (const x of [-0.765, 0.765]) addMesh(new THREE.BoxGeometry(0.03, 0.24, 1.04), m, crateTray, { x, y: 0.12 });
+      for (const x of [-0.26, 0.26]) addMesh(new THREE.BoxGeometry(0.015, 0.18, 1.0), m, crateTray, { x, y: 0.12 });
+      addMesh(new THREE.BoxGeometry(1.5, 0.18, 0.015), m, crateTray, { y: 0.12 });
+      crateHit = makeHit(new THREE.BoxGeometry(1.8, 1.0, 1.25), crateTray, 0, 0.4, 0);
+      g.add(crateTray);
+      endCap.add(g);
+      return g;
     }
 
     /* =====================================================================
-       9. THE PULL CHAIN
-       Hangs from a small switch box beside the housing. You drag the handle
-       down; a spring pulls it back up with a little bounce; a tug past
-       `triggerAt` "clicks" the switch and starts the machine.
+       8. THINGS YOU DRAG: the pull chain and the press knob
        ===================================================================== */
 
-    // Where the chain comes out of the switch box
-    const CHAIN_TOP = new THREE.Vector3(STATION.x + 0.62, STATION.housingCenter.y - 0.06, 0.92);
-    let powerLedMaterial;
+    const _tmp = new THREE.Vector3();
 
-    // Switch box and the bracket that holds it
-    {
-      const boxCenter = CHAIN_TOP.clone().add(new THREE.Vector3(0, 0.1, 0));
-      addMesh(new RoundedBoxGeometry(0.18, 0.2, 0.18, 2, 0.025), MAT.paint, station, { x: boxCenter.x, y: boxCenter.y, z: boxCenter.z });
-      addMesh(new THREE.TorusGeometry(0.022, 0.008, 6, 16).rotateX(Math.PI / 2), MAT.darkSteel, station, { x: CHAIN_TOP.x, y: CHAIN_TOP.y, z: CHAIN_TOP.z });
-      powerLedMaterial = new THREE.MeshStandardMaterial({ color: 0x0b2a12, emissive: 0x4dff7a, emissiveIntensity: 2.2 });
-      addMesh(new THREE.SphereGeometry(0.014, 12, 8), powerLedMaterial, station, { x: boxCenter.x, y: boxCenter.y + 0.05, z: boxCenter.z + 0.092, cast: false });
-
-      const from = new THREE.Vector3(STATION.x + 0.3, STATION.housingCenter.y + 0.04, 0.1);
-      const to = boxCenter.clone().add(new THREE.Vector3(-0.05, 0.02, 0));
-      const bracket = addMesh(new THREE.BoxGeometry(0.05, 0.05, from.distanceTo(to)), MAT.darkSteel, station);
-      bracket.position.copy(from).lerp(to, 0.5);
-      bracket.lookAt(to);
-    }
-
+    // The chain: drag the handle down, a spring pulls it back with a little bounce.
+    // A tug past `triggerAt` clicks the switch.
     class PullChain {
-      constructor(anchor) {
-        this.restLength = 1.45;              // length of chain below the switch box
-        this.pitch = 0.072;                  // spacing between links
-        this.maxPull = 0.72;                 // how far down it can be pulled
-        this.triggerAt = 0.28;               // pulling past this "clicks" the switch
-        this.k = 140;                        // spring stiffness
-        this.c = 7.5;                        // spring damping (lower = bouncier)
-
-        this.d = 0;           // current pull distance (0 = at rest, positive = pulled down)
-        this.v = 0;           // speed of d
+      constructor(anchor, restLength) {
+        this.restLength = restLength;
+        this.pitch = 0.072;         // spacing between links
+        this.maxPull = 0.72;
+        this.triggerAt = 0.28;
+        this.k = 140;               // spring stiffness
+        this.c = 7.5;               // spring damping (lower = bouncier)
+        this.d = 0;                 // how far it's pulled down
+        this.v = 0;
         this.lastV = 0;
         this.dragging = false;
         this.dragTarget = 0;
         this.tripped = false;
-        this.onTug = null;    // set later: what happens when the switch clicks
+        this.onTug = null;
 
-        // Gentle swinging (two small angles: side-to-side, and toward/away from the camera)
+        // gentle swinging: side to side (A) and toward/away from the camera (B)
         this.swayA = 0; this.swayAV = 0; this.swayTarget = 0;
         this.swayB = 0; this.swayBV = 0;
-        // Axes for the swing, based on the starting camera direction
-        this.faceAxis = new THREE.Vector3().subVectors(camera.position, anchor).setY(0).normalize();
+        this.faceAxis = new THREE.Vector3(Math.sin(VIEW.azimuth), 0, Math.cos(VIEW.azimuth));
         this.sideAxis = new THREE.Vector3(0, 1, 0).cross(this.faceAxis).normalize();
         this._qa = new THREE.Quaternion();
         this._qb = new THREE.Quaternion();
@@ -807,7 +1103,6 @@
         this.group.position.copy(anchor);
         scene.add(this.group);
 
-        // Links: oval rings, every other one turned 90 degrees
         const linkGeo = new THREE.TorusGeometry(0.026, 0.0072, 6, 16).scale(1, 1.65, 1);
         const count = Math.ceil((this.restLength + 0.3) / this.pitch) + 2;
         this.links = [];
@@ -817,7 +1112,6 @@
           this.links.push(link);
         }
 
-        // Handle: ring, brass caps and a black rubber grip
         this.handle = new THREE.Group();
         addMesh(new THREE.TorusGeometry(0.03, 0.008, 6, 16).scale(1, 1.3, 1), MAT.brass, this.handle, { y: -0.025 });
         addMesh(new THREE.CylinderGeometry(0.022, 0.05, 0.05, 20), MAT.brass, this.handle, { y: -0.075 });
@@ -827,25 +1121,17 @@
         addMesh(new THREE.CylinderGeometry(0.056, 0.05, 0.03, 20), MAT.brass, this.handle, { y: -0.315 });
         addMesh(new THREE.SphereGeometry(0.03, 16, 10), MAT.brass, this.handle, { y: -0.335 });
         this.group.add(this.handle);
-
-        // An invisible, generous grab zone around the handle (the handle itself is tiny on screen)
-        this.hitArea = new THREE.Mesh(
-          new THREE.CapsuleGeometry(0.26, 0.5, 4, 8),
-          new THREE.MeshBasicMaterial({ visible: false })
-        );
-        this.hitArea.position.y = -0.12;
-        this.handle.add(this.hitArea);
+        this.hitArea = makeHit(new THREE.CapsuleGeometry(0.26, 0.5, 4, 8), this.handle, 0, -0.12, 0);
 
         this.dragPlane = new THREE.Plane();
         this.grabPoint = new THREE.Vector3();
         this._hit = new THREE.Vector3();
-        this._tmp = new THREE.Vector3();
         this.layout(0);
       }
 
       beginDrag(ray) {
-        // We drag on an invisible vertical sheet that faces the camera
-        const normal = this._tmp.subVectors(camera.position, this.group.position).setY(0).normalize();
+        // drag on an invisible vertical sheet facing the camera
+        const normal = _tmp.subVectors(camera.position, this.group.position).setY(0).normalize();
         this.dragPlane.setFromNormalAndCoplanarPoint(normal, this.handle.getWorldPosition(this._hit));
         if (!ray.intersectPlane(this.dragPlane, this.grabPoint)) this.grabPoint.copy(this._hit);
         this.dragStartD = this.d;
@@ -857,19 +1143,18 @@
       drag(ray) {
         if (!ray.intersectPlane(this.dragPlane, this._hit)) return;
         const raw = this.dragStartD + (this.grabPoint.y - this._hit.y);
-        // Easy at first, then it resists more and more (never past maxPull)
         this.dragTarget = raw >= 0
-          ? this.maxPull * (1 - Math.exp(-raw / this.maxPull))
+          ? this.maxPull * (1 - Math.exp(-raw / this.maxPull))   // easy at first, then resists
           : Math.max(raw * 0.25, -0.06);
-        const sideways = this._tmp.subVectors(this._hit, this.grabPoint).dot(this.sideAxis);
-        this.swayTarget = THREE.MathUtils.clamp(sideways * 0.35, -0.28, 0.28);
+        const sideways = _tmp.subVectors(this._hit, this.grabPoint).dot(this.sideAxis);
+        this.swayTarget = clamp(sideways * 0.35, -0.28, 0.28);
       }
 
       endDrag() {
         if (!this.dragging) return;
         this.dragging = false;
         this.swayTarget = 0;
-        this.swayBV += (Math.random() - 0.5) * 0.9;   // a little random swing when you let go
+        this.swayBV += (Math.random() - 0.5) * 0.9;
         this.swayAV += (Math.random() - 0.5) * 0.5;
         Sound.clink(0.4 + Math.min(0.6, Math.abs(this.v) * 0.25));
       }
@@ -877,31 +1162,25 @@
       update(dt, time) {
         const prevD = this.d;
         if (this.dragging) {
-          // Follow the pointer (with a tiny bit of lag so it feels weighty)
           this.d = damp(this.d, this.dragTarget, 28, dt);
           this.v = dt > 0 ? (this.d - prevD) / dt : 0;
         } else {
-          // Spring back to rest. Small sub-steps keep the simulation stable.
           const steps = 4, h = dt / steps;
           for (let i = 0; i < steps; i++) {
-            const accel = -this.k * this.d - this.c * this.v;
-            this.v += accel * h;
+            this.v += (-this.k * this.d - this.c * this.v) * h;
             this.d += this.v * h;
           }
           if (this.d < -0.16) { this.d = -0.16; this.v = Math.max(this.v, 0); }
-          // A little rattle at the top of the bounce
-          if (this.lastV < -0.05 && this.v >= 0 && this.d < -0.02) Sound.clink(0.3);
+          if (this.lastV < -0.05 && this.v >= 0 && this.d < -0.02) Sound.clink(0.3); // rattle at the top of the bounce
         }
         this.lastV = this.v;
 
-        // The switch clicks when you pull past triggerAt
         if (this.dragging && !this.tripped && this.d > this.triggerAt) {
           this.tripped = true;
           if (this.onTug) this.onTug();
         }
         if (this.tripped && this.d < 0.06) this.tripped = false;
 
-        // Swing (a damped pendulum)
         const stiffness = 9, friction = 0.9;
         if (this.dragging) {
           const prevA = this.swayA;
@@ -913,91 +1192,114 @@
         }
         this.swayBV += (-stiffness * this.swayB - friction * this.swayBV) * dt;
         this.swayB += this.swayBV * dt;
-        const idle = Math.sin(time * 0.9) * 0.006; // barely-there breathing motion
+        const idle = Math.sin(time * 0.9) * 0.006;
         this._qa.setFromAxisAngle(this.faceAxis, this.swayA + idle);
         this._qb.setFromAxisAngle(this.sideAxis, this.swayB);
         this.group.quaternion.multiplyQuaternions(this._qa, this._qb);
-
         this.layout(this.d);
       }
 
       // Place the links between the switch box and the handle
       layout(d) {
         const total = this.restLength + d;
-        const stretch = 1 + Math.max(0, d) * 0.16;  // links spread apart a little when pulled
+        const stretch = 1 + Math.max(0, d) * 0.16;
         for (let i = 0; i < this.links.length; i++) {
           const dist = total - (i + 0.5) * this.pitch * stretch;
-          const link = this.links[i];
-          link.visible = dist > 0.02;                // links above this are "inside" the switch box
-          link.position.y = -dist;
+          this.links[i].visible = dist > 0.02;
+          this.links[i].position.y = -dist;
         }
         this.handle.position.y = -total;
       }
     }
 
-    /* =====================================================================
-       10. SODA CANS
-       ===================================================================== */
+    // The capper knob: drag it down to push the press; a spring lifts it back up.
+    class PressHandle {
+      constructor(travel) {
+        this.travel = travel;
+        this.p = 0;               // 0 = up, 1 = all the way down
+        this.v = 0;
+        this.target = 0;
+        this.dragging = false;
+        this.plane = new THREE.Plane();
+        this.grab = new THREE.Vector3();
+        this._hit = new THREE.Vector3();
+      }
+      beginDrag(ray, knobWorld) {
+        const normal = _tmp.subVectors(camera.position, knobWorld).setY(0).normalize();
+        this.plane.setFromNormalAndCoplanarPoint(normal, knobWorld);
+        if (!ray.intersectPlane(this.plane, this.grab)) this.grab.copy(knobWorld);
+        this.startP = this.p;
+        this.target = this.p;
+        this.dragging = true;
+      }
+      drag(ray) {
+        if (!ray.intersectPlane(this.plane, this._hit)) return;
+        this.target = clamp01(this.startP + (this.grab.y - this._hit.y) / this.travel);
+      }
+      endDrag() { this.dragging = false; }
+      update(dt) {
+        if (this.dragging) {
+          const prev = this.p;
+          this.p = damp(this.p, this.target, 22, dt);
+          this.v = dt > 0 ? (this.p - prev) / dt : 0;
+        } else {
+          const steps = 4, h = dt / steps;
+          for (let i = 0; i < steps; i++) {
+            this.v += (-90 * this.p - 11 * this.v) * h;
+            this.p += this.v * h;
+          }
+          if (this.p < -0.05) { this.p = -0.05; this.v = Math.max(this.v, 0); }
+        }
+      }
+    }
 
-    // Shapes shared by every can (made once). Heights are measured from the can's base.
-    const CAN_GEO = (() => {
-      const r = CAN.radius;
-      return {
-        bottomRing: new THREE.CylinderGeometry(r, 0.175, 0.06, 40, 1, true).translate(0, 0.03, 0),
-        bottomCap: new THREE.CircleGeometry(0.175, 32).rotateX(Math.PI / 2).translate(0, 0.003, 0),
-        body: new THREE.CylinderGeometry(r, r, 0.62, 48, 1, true).translate(0, 0.37, 0),        // the label part
-        shoulder: new THREE.CylinderGeometry(0.185, r, 0.09, 48, 1, true).translate(0, 0.725, 0),
-        neck: new THREE.CylinderGeometry(0.185, 0.185, 0.03, 48, 1, true).translate(0, 0.785, 0),
-        rim: new THREE.TorusGeometry(0.185, 0.011, 8, 48).rotateX(Math.PI / 2).translate(0, 0.8, 0),
-        inner: new THREE.CylinderGeometry(0.219, 0.219, 0.62, 32, 1, true).translate(0, 0.37, 0), // inside wall
-        innerBottom: new THREE.CircleGeometry(0.219, 32).rotateX(Math.PI / 2).translate(0, 0.065, 0), // faces down: drawn with the back-side inner material
-        liquid: new THREE.CylinderGeometry(0.213, 0.213, 0.6, 32).translate(0, 0.37, 0),
-        surface: new THREE.CircleGeometry(0.213, 40).rotateX(-Math.PI / 2),
-        lid: new THREE.CylinderGeometry(0.19, 0.19, 0.016, 40).translate(0, 0.008, 0),
-        lidRing: new THREE.TorusGeometry(0.168, 0.007, 6, 40).rotateX(Math.PI / 2).translate(0, 0.017, 0),
-        tab: new RoundedBoxGeometry(0.11, 0.008, 0.055, 2, 0.003).translate(0.035, 0.021, 0),
-        rivet: new THREE.CylinderGeometry(0.012, 0.012, 0.01, 12).translate(0, 0.02, 0),
-      };
-    })();
+    /* =====================================================================
+       9. CANS
+       Each can remembers what has been done to it: fill, lid, label, stamp.
+       ===================================================================== */
 
     const cans = [];
     const _v = new THREE.Vector3();
 
     class Can {
-      constructor() {
-        this.s = SPOT.canStart;  // position along the belt
-        this.fill = 0;           // 0 = empty .. 1 = full
-        this.xray = 0;           // 0 = solid label .. 1 = see-through label (so you can watch it fill)
-        this.opacity = 1;        // overall fade (appearing / falling away)
-        this.squash = 0;         // a little squish when the lid lands
-        this.dropY = 0;          // extra height while dropping onto the belt
-        this.state = 'belt';     // 'belt' = riding the conveyor, 'falling' = off the end
+      constructor(x) {
+        this.x = x;                // position along the belt
+        this.fill = 0;             // 0 empty .. 1 full .. above 1 = spilling over
+        this.maxFill = 0;
+        this.filledDone = false;   // poured and valve let go
+        this.capped = false;
+        this.labelProgress = 0;    // 0 .. 1 (wrapped all the way round)
+        this.labeled = false;
+        this.stamped = false;
+        this.xray = 0;             // see-through body while at the filler, so you can watch it fill
+        this.xrayTarget = 0;
+        this.opacity = 1;
+        this.squash = 0;
+        this.dropY = 0;
+        this.state = 'belt';       // 'belt' | 'falling' | 'crating' | 'crated'
         this.appearing = false;
-        this.lidOn = false;
 
-        // Own copies of the materials, so this can fades without affecting others
         this.mat = {
           alu: MAT.canAlu.clone(),
+          body: MAT.canBody.clone(),
           lid: MAT.canLid.clone(),
           label: MAT.canLabel.clone(),
           inner: MAT.canInner.clone(),
+          ink: MAT.ink.clone(),
           liquid: MAT.liquid.clone(),
           surface: MAT.liquidSurface.clone(),
         };
-        // The liquid is a full-height cylinder cut off by a flat, level plane at the fill height.
-        // That keeps the surface level even if the belt (and so the can) is tilted.
+        // The liquid is a full-height cylinder cut off by a level plane at the fill height
         this.levelPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
         this.mat.liquid.clippingPlanes = [this.levelPlane];
 
-        this.group = new THREE.Group(); // moves along the belt
-        this.body = new THREE.Group();  // squashes
+        this.group = new THREE.Group();
+        this.body = new THREE.Group();
         this.group.add(this.body);
-
         const G = CAN_GEO, m = this.mat, b = this.body;
-        // renderOrder: draw the inside first, then the see-through label on top
         const part = (geo, mat, order, cast = true) => {
           const mesh = addMesh(geo, mat, b, { cast });
-          mesh.renderOrder = order;
+          mesh.renderOrder = order; // inside first, then the see-through outside
           return mesh;
         };
         part(G.inner, m.inner, 1, false);
@@ -1007,138 +1309,147 @@
         part(G.shoulder, m.alu, 2);
         part(G.neck, m.alu, 2);
         part(G.rim, m.alu, 2);
-        part(G.body, m.label, 3);
+        part(G.body, m.body, 3);
+        this.labelGeo = G.labelBand.clone();
+        this.labelGeo.setDrawRange(0, 0);
+        this.labelMesh = part(this.labelGeo, m.label, 4);
+        this.labelMesh.visible = false;
 
-        // Liquid (hidden until pouring starts)
         this.liquid = new THREE.Group();
         b.add(this.liquid);
         addMesh(G.liquid, m.liquid, this.liquid, { cast: false });
-        // The surface disc is turned back to be level with the world (undoing the belt tilt),
-        // and stretched to match, because a level slice through a tilted can is an oval.
-        this.surface = new THREE.Group();
-        this.surface.rotation.z = -BELT.angle;
-        this.liquid.add(this.surface);
-        const disc = addMesh(G.surface, m.surface, this.surface, { cast: false });
-        disc.scale.x = 1 / Math.cos(BELT.angle);
+        this.surface = addMesh(G.surface, m.surface, this.liquid, { cast: false });
         this.liquid.visible = false;
 
-        // Lid (hidden until it pops on)
-        this.lid = new THREE.Group();
-        for (const geo of [G.lid, G.lidRing, G.tab, G.rivet]) addMesh(geo, m.lid, this.lid);
+        this.lid = makeLidMesh(m.lid);
         this.lid.position.y = CAN.height - 0.004;
         this.lid.visible = false;
         b.add(this.lid);
+        this.mark = addMesh(G.mark, m.ink, this.lid, { x: -0.07, y: 0.0175, cast: false });
+        this.mark.visible = false;
 
-        conveyor.add(this.group);
+        scene.add(this.group);
         cans.push(this);
         this.place();
       }
 
-      get levelLocal() { return lerp(CAN.levelMin, CAN.levelMax, this.fill); }
+      get levelLocal() { return lerp(CAN.levelMin, CAN.levelMax, Math.min(1, this.fill)); }
 
-      // World height of the liquid surface (where the pouring stream should end)
-      levelWorldY() {
-        return this.body.localToWorld(_v.set(0, this.levelLocal, 0)).y;
-      }
+      levelWorldY() { return this.body.localToWorld(_v.set(0, this.levelLocal, 0)).y; }
 
       place() {
-        if (this.state === 'belt') this.group.position.set(this.s, BELT_TOP + this.dropY, 0);
+        if (this.state === 'belt') this.group.position.set(this.x, SURFACE + this.dropY, 0);
       }
 
-      // Drop in from above with a little bounce
-      appear() {
+      // Drop from height h onto the belt with a little bounce
+      appear(h) {
         this.appearing = true;
         this.appearT = 0;
         this.bounces = 0;
-        this.dropY = 0.6;
-        this.opacity = 0;
+        this.dropH = h;
+        this.dropY = h;
       }
 
-      // Leave the belt and tumble into the void
       startFall(speed) {
         this.state = 'falling';
         this.fallT = 0;
-        scene.attach(this.group); // keep its world position, but stop following the conveyor
-        this.velocity = new THREE.Vector3(Math.cos(BELT.angle), Math.sin(BELT.angle), 0)
-          .multiplyScalar(Math.max(speed, 0.9))
-          .add(new THREE.Vector3(0, 0.35, 0));
+        this.velocity = new THREE.Vector3(Math.max(speed, 0.9), 0.35, 0);
         this.spin = new THREE.Vector3(rand(-0.4, 0.4), rand(-0.6, 0.6), rand(-3.6, -2.6));
       }
 
       update(dt) {
         if (this.state === 'falling') {
           this.fallT += dt;
-          this.velocity.y -= 9.5 * dt; // gravity
+          this.velocity.y -= 9.5 * dt;
           this.group.position.addScaledVector(this.velocity, dt);
           this.group.rotation.x += this.spin.x * dt;
           this.group.rotation.y += this.spin.y * dt;
           this.group.rotation.z += this.spin.z * dt;
           this.opacity = 1 - Ease.inQuad(clamp01(this.fallT / 1.5));
           if (this.fallT > 1.7) { this.dispose(); return; }
+        } else if (this.state === 'crating') {
+          // hop off the end of the belt into a slot in the crate
+          this.crateT += dt;
+          const k = clamp01(this.crateT / 0.5);
+          const to = crate.slotWorld(this.slot, _v);
+          const f = this.crateFrom;
+          this.group.position.set(
+            lerp(f.x, to.x, Ease.inOutSine(k)),
+            lerp(f.y, to.y, k * k) + Math.sin(Math.PI * k) * 0.18,
+            lerp(f.z, to.z, Ease.inOutSine(k))
+          );
+          if (k >= 1) crate.land(this);
         }
 
         if (this.appearing) {
           this.appearT += dt;
-          const k = clamp01(this.appearT / 0.95);
-          this.dropY = 0.6 * (1 - Ease.outBounce(k));
-          this.opacity = Ease.outCubic(clamp01(this.appearT / 0.35));
-          const impacts = [1 / 2.75, 2 / 2.75, 2.5 / 2.75]; // moments the bounce touches down
+          const k = clamp01(this.appearT / 0.9);
+          this.dropY = this.dropH * (1 - Ease.outBounce(k));
+          const impacts = [1 / 2.75, 2 / 2.75, 2.5 / 2.75];
           if (this.bounces < impacts.length && k >= impacts[this.bounces]) {
             Sound.tock(this.bounces === 0 ? 1 : 0.3 / this.bounces);
             if (this.bounces === 0) this.squash = 0.5;
             this.bounces++;
           }
-          if (k >= 1) { this.appearing = false; this.dropY = 0; this.opacity = 1; }
+          if (k >= 1) { this.appearing = false; this.dropY = 0; }
         }
 
         this.place();
 
-        // Squash and recover
         this.squash = damp(this.squash, 0, 9, dt);
         const sq = this.squash;
         this.body.scale.set(1 + 0.03 * sq, 1 - 0.06 * sq, 1 + 0.03 * sq);
+        this.xray = damp(this.xray, this.xrayTarget, 6, dt);
 
-        // Liquid: only drawn while it can be seen
-        const showLiquid = this.fill > 0.001 && !(this.lidOn && this.xray < 0.001) && this.state === 'belt';
+        // Label: turn the can as it wraps, and reveal the label slice by slice
+        if (this.labelProgress > 0) {
+          this.body.rotation.y = -this.labelProgress * Math.PI * 2;
+          const slices = Math.floor(this.labelProgress * LABEL_SLICES + 0.0001);
+          this.labelGeo.setDrawRange(0, slices * 6);
+          this.labelMesh.visible = slices > 0;
+        }
+
+        // Liquid only drawn while it can be seen
+        const showLiquid = this.fill > 0.001 && this.state === 'belt' && !(this.capped && this.xray < 0.001);
         this.liquid.visible = showLiquid;
         if (showLiquid) {
           this.surface.position.y = this.levelLocal;
           this.levelPlane.constant = this.surface.getWorldPosition(_v).y + 0.002;
         }
 
-        // Fades
         const o = this.opacity;
         this.mat.alu.opacity = o;
         this.mat.lid.opacity = o;
         this.mat.inner.opacity = o;
-        this.mat.label.opacity = o * (1 - 0.8 * this.xray);
+        this.mat.label.opacity = o;
+        this.mat.ink.opacity = o;
+        this.mat.body.opacity = o * (1 - 0.8 * this.xray);
       }
 
       dispose() {
         this.group.removeFromParent();
         for (const mat of Object.values(this.mat)) mat.dispose();
-        cans.splice(cans.indexOf(this), 1);
+        this.labelGeo.dispose();
+        const i = cans.indexOf(this);
+        if (i >= 0) cans.splice(i, 1);
       }
     }
 
     /* =====================================================================
-       11. THE POURING STREAM AND SPLASHES
+       10. POURING STREAM, SPLASHES, DUST AND THE LIGHT BEAM
        ===================================================================== */
 
     const stream = {
-      // A thin cylinder whose origin is at the top, so stretching it grows it downward
+      // a thin cylinder with its origin at the top, so stretching it grows it downward
       mesh: new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.032, 1, 14, 4, true).translate(0, -0.5, 0), MAT.stream),
-      phase: 'off',   // 'falling' (front of the stream dropping) | 'flowing' | 'ending' (tail dropping) | 'off'
+      phase: 'off',   // 'falling' | 'flowing' | 'ending' | 'off'
       t: 0,
-      hitting: false, // is liquid currently landing in the can?
-
+      hitting: false,
       start() { this.phase = 'falling'; this.t = 0; },
-      stop() { if (this.phase !== 'off') { this.phase = 'ending'; this.t = 0; } },
-
-      update(dt, time, tipY, surfaceY) {
+      stop() { if (this.phase === 'falling' || this.phase === 'flowing') { this.phase = 'ending'; this.t = 0; } },
+      update(dt, time, x, tipY, surfaceY) {
         this.t += dt;
-        const gravity = 7;
-        const fallen = 0.5 * gravity * this.t * this.t;
+        const fallen = 0.5 * 7 * this.t * this.t;
         let top = tipY + 0.01, bottom = surfaceY;
         if (this.phase === 'falling') {
           bottom = Math.max(surfaceY, tipY - fallen);
@@ -1152,18 +1463,18 @@
         this.mesh.visible = this.phase !== 'off' && length > 0.003;
         if (this.mesh.visible) {
           const wobble = 1 + Math.sin(time * 37) * 0.05 + Math.sin(time * 23) * 0.04;
-          this.mesh.position.set(STATION.x, top, STATION.nozzleTip.z);
+          this.mesh.position.set(x, top, 0);
           this.mesh.scale.set(wobble, length, wobble);
         }
-        TEX.stream.offset.y += dt * 2.4; // makes the stream look like it's flowing
+        TEX.stream.offset.y += dt * 2.4;
       },
     };
     stream.mesh.visible = false;
     scene.add(stream.mesh);
 
-    // Little droplets that jump up where the stream hits the liquid
+    // Droplets (splashes where the stream lands, and foam spilling over a too-full can)
     const splash = (() => {
-      const COUNT = 48;
+      const COUNT = 90;
       const positions = new Float32Array(COUNT * 3).fill(-100);
       const velocity = new Float32Array(COUNT * 3);
       const life = new Float32Array(COUNT);
@@ -1174,20 +1485,15 @@
       }));
       points.frustumCulled = false;
       scene.add(points);
-      let next = 0, emitTimer = 0;
-
+      let next = 0;
       return {
-        update(dt, emitting, x, y, z) {
-          if (emitting) {
-            emitTimer += dt;
-            while (emitTimer > 0.012) {
-              emitTimer -= 0.012;
-              const i = next++ % COUNT;
-              positions.set([x + rand(-0.02, 0.02), y, z + rand(-0.02, 0.02)], i * 3);
-              velocity.set([rand(-0.35, 0.35), rand(0.4, 0.9), rand(-0.35, 0.35)], i * 3);
-              life[i] = rand(0.2, 0.4);
-            }
-          }
+        emit(x, y, z, vx, vy, vz, t) {
+          const i = next++ % COUNT;
+          positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
+          velocity[i * 3] = vx; velocity[i * 3 + 1] = vy; velocity[i * 3 + 2] = vz;
+          life[i] = t;
+        },
+        update(dt) {
           for (let i = 0; i < COUNT; i++) {
             if (life[i] <= 0) continue;
             life[i] -= dt;
@@ -1195,29 +1501,24 @@
             positions[i * 3] += velocity[i * 3] * dt;
             positions[i * 3 + 1] += velocity[i * 3 + 1] * dt;
             positions[i * 3 + 2] += velocity[i * 3 + 2] * dt;
-            if (life[i] <= 0) positions[i * 3 + 1] = -100; // hide it
+            if (life[i] <= 0) positions[i * 3 + 1] = -100;
           }
           geo.attributes.position.needsUpdate = true;
         },
       };
     })();
 
-    /* =====================================================================
-       12. ATMOSPHERE: DUST IN THE LIGHT BEAM, AND A FAINT VISIBLE BEAM
-       ===================================================================== */
-
-    const keyLightDir = keyLight.target.position.clone().sub(keyLight.position).normalize();
-
+    // Dust specks drifting in the spotlight (they follow the view along the line)
     const dust = (() => {
       const COUNT = 520;
-      const min = new THREE.Vector3(-5, -4, -3.5), max = new THREE.Vector3(5, 7.5, 4.0);
+      const halfX = 5, minY = -4, maxY = 7.5, minZ = -3.5, maxZ = 4.0;
       const positions = new Float32Array(COUNT * 3);
       const drift = new Float32Array(COUNT * 3);
       const seeds = new Float32Array(COUNT);
       for (let i = 0; i < COUNT; i++) {
-        positions[i * 3] = rand(min.x, max.x);
-        positions[i * 3 + 1] = rand(min.y, max.y);
-        positions[i * 3 + 2] = rand(min.z, max.z);
+        positions[i * 3] = rand(-halfX, halfX);
+        positions[i * 3 + 1] = rand(minY, maxY);
+        positions[i * 3 + 2] = rand(minZ, maxZ);
         drift[i * 3] = rand(-0.03, 0.03);
         drift[i * 3 + 1] = rand(-0.035, 0.01);
         drift[i * 3 + 2] = rand(-0.03, 0.03);
@@ -1226,16 +1527,14 @@
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
       geo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
-
-      // A tiny custom shader: each speck only shows up inside the spotlight's cone, and twinkles.
       const material = new THREE.ShaderMaterial({
         uniforms: {
           uTime: { value: 0 },
           uSize: { value: 0.085 },
           uScale: { value: window.innerHeight * pixelRatio * 0.5 },
           uColor: { value: new THREE.Color(0xffd9a8).multiplyScalar(0.9) },
-          uLightPos: { value: keyLight.position.clone() },
-          uLightDir: { value: keyLightDir },
+          uLightPos: { value: new THREE.Vector3() },
+          uLightDir: { value: KEY_DIR },
           uCosOuter: { value: Math.cos(keyLight.angle * 0.62) },
           uCosInner: { value: Math.cos(keyLight.angle * 0.22) },
         },
@@ -1248,7 +1547,7 @@
             vec4 mv = modelViewMatrix * vec4(position, 1.0);
             float inBeam = smoothstep(uCosOuter, uCosInner, dot(normalize(position - uLightPos), uLightDir));
             float twinkle = 0.55 + 0.45 * sin(uTime * (0.5 + aSeed * 1.6) + aSeed * 40.0);
-            float nearLamp = smoothstep(1.5, 4.0, distance(position, uLightPos)); // no specks right at the lamp
+            float nearLamp = smoothstep(1.5, 4.0, distance(position, uLightPos));
             vAlpha = inBeam * twinkle * nearLamp;
             gl_PointSize = uSize * (0.6 + aSeed * 0.9) * uScale / -mv.z;
             gl_Position = projectionMatrix * mv;
@@ -1258,8 +1557,7 @@
           varying float vAlpha;
           void main() {
             float d = length(gl_PointCoord - 0.5);
-            float a = smoothstep(0.5, 0.0, d) * vAlpha;
-            gl_FragColor = vec4(uColor, a);
+            gl_FragColor = vec4(uColor, smoothstep(0.5, 0.0, d) * vAlpha);
           }`,
         transparent: true,
         depthWrite: false,
@@ -1271,27 +1569,28 @@
 
       return {
         material,
-        update(dt, time) {
+        update(dt, time, cx, viewDist) {
           for (let i = 0; i < COUNT; i++) {
             const s = seeds[i];
             let x = positions[i * 3] + (drift[i * 3] + Math.sin(time * 0.15 + s * 31) * 0.035) * dt;
             let y = positions[i * 3 + 1] + (drift[i * 3 + 1] + Math.cos(time * 0.11 + s * 17) * 0.025) * dt;
             let z = positions[i * 3 + 2] + (drift[i * 3 + 2] + Math.sin(time * 0.13 + s * 7) * 0.03) * dt;
-            // wrap around when leaving the box
-            if (y < min.y) y = max.y; else if (y > max.y) y = min.y;
-            if (x < min.x) x = max.x; else if (x > max.x) x = min.x;
-            if (z < min.z) z = max.z; else if (z > max.z) z = min.z;
+            if (y < minY) y = maxY; else if (y > maxY) y = minY;
+            if (x < cx - halfX) x += halfX * 2; else if (x > cx + halfX) x -= halfX * 2;
+            if (z < minZ) z = maxZ; else if (z > maxZ) z = minZ;
             positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
           }
           geo.attributes.position.needsUpdate = true;
           material.uniforms.uTime.value = time;
+          material.uniforms.uLightPos.value.copy(keyLight.position);
+          material.uniforms.uSize.value = 0.085 * (viewDist / VIEW.startDist); // specks stay fine at any zoom
         },
       };
     })();
 
     // A very faint cone of light, like a beam through dusty air
-    {
-      const length = keyLight.position.distanceTo(keyLight.target.position) * 1.8;
+    const beam = (() => {
+      const length = KEY_OFFSET.length() * 1.8;
       const geo = new THREE.CylinderGeometry(0.12, length * Math.tan(keyLight.angle * 0.62), length, 48, 1, true)
         .translate(0, -length / 2, 0);
       const material = new THREE.ShaderMaterial({
@@ -1301,7 +1600,7 @@
           varying vec3 vView;
           varying float vAlong;
           void main() {
-            vAlong = uv.y;                                  // 1 at the lamp, 0 at the far end
+            vAlong = uv.y;
             vec4 mv = modelViewMatrix * vec4(position, 1.0);
             vView = normalize(-mv.xyz);
             vNormal = normalize(normalMatrix * normal);
@@ -1314,7 +1613,7 @@
           varying vec3 vView;
           varying float vAlong;
           void main() {
-            float facing = pow(abs(dot(normalize(vNormal), normalize(vView))), 2.0); // soft edges
+            float facing = pow(abs(dot(normalize(vNormal), normalize(vView))), 2.0);
             float along = smoothstep(0.0, 0.6, vAlong) * smoothstep(1.0, 0.85, vAlong);
             gl_FragColor = vec4(uColor, facing * along * uStrength);
           }`,
@@ -1323,33 +1622,31 @@
         side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending,
       });
-      const beam = new THREE.Mesh(geo, material);
-      beam.position.copy(keyLight.position);
-      beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), keyLightDir);
-      beam.renderOrder = 10;
-      scene.add(beam);
-    }
+      const mesh = new THREE.Mesh(geo, material);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, -1, 0), KEY_DIR);
+      mesh.renderOrder = 10;
+      scene.add(mesh);
+      return mesh;
+    })();
 
     /* =====================================================================
-       13. SOUND (generated live with the Web Audio API, no audio files)
-       Browsers only allow sound after the user interacts, so everything
-       starts on the first click/tap.
+       11. SOUND (made live with the Web Audio API; starts on the first click)
        ===================================================================== */
 
     const Sound = {
       ctx: null,
-      last: { hum: -1, pour: -1, pitch: -1 },
+      last: { hum: -1, pour: -1, pitch: -1, rustle: -1 },
 
       unlock() {
         if (!this.ctx) {
-          try { this.init(); } catch (err) { console.warn('Web Audio unavailable', err); return; }
+          try { this.init(); } catch (err) { return; }
         }
         if (this.ctx.state === 'suspended') this.ctx.resume();
       },
 
       init() {
         const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) throw new Error('No AudioContext');
+        if (!AC) throw new Error('no audio');
         const ctx = (this.ctx = new AC());
         this.master = ctx.createGain();
         this.master.gain.value = 0.7;
@@ -1357,7 +1654,6 @@
         this.master.connect(compressor);
         compressor.connect(ctx.destination);
 
-        // Two seconds of white noise, reused for many sounds
         const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
         const data = buffer.getChannelData(0);
         for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
@@ -1371,7 +1667,7 @@
           return src;
         };
 
-        // --- Motor hum: a few low buzzy tones through a muffling filter (volume follows belt speed)
+        // Motor hum (volume follows belt speed)
         this.humGain = ctx.createGain();
         this.humGain.gain.value = 0;
         this.humGain.connect(this.master);
@@ -1392,17 +1688,17 @@
           osc.start();
           this.humOscillators.push({ osc, base: freq });
         }
-        const rumbleFilter = ctx.createBiquadFilter();
-        rumbleFilter.type = 'bandpass';
-        rumbleFilter.frequency.value = 180;
-        rumbleFilter.Q.value = 0.8;
+        const rumble = ctx.createBiquadFilter();
+        rumble.type = 'bandpass';
+        rumble.frequency.value = 180;
+        rumble.Q.value = 0.8;
         const rumbleGain = ctx.createGain();
         rumbleGain.gain.value = 0.3;
-        loopNoise().connect(rumbleFilter);
-        rumbleFilter.connect(rumbleGain);
+        loopNoise().connect(rumble);
+        rumble.connect(rumbleGain);
         rumbleGain.connect(this.humGain);
 
-        // --- Pouring: filtered noise whose pitch rises as the can fills up
+        // Pouring: filtered noise whose pitch rises as the can fills
         this.pourGain = ctx.createGain();
         this.pourGain.gain.value = 0;
         this.pourGain.connect(this.master);
@@ -1425,16 +1721,26 @@
         highpass.connect(fizz);
         fizz.connect(fizzGain);
         fizzGain.connect(this.pourGain);
-        const wobble = ctx.createOscillator();      // gentle "glug" wobble
+        const wobble = ctx.createOscillator();
         wobble.frequency.value = 7;
         const wobbleAmount = ctx.createGain();
         wobbleAmount.gain.value = 60;
         wobble.connect(wobbleAmount);
         wobbleAmount.connect(this.pourFilter.frequency);
         wobble.start();
+
+        // Paper rustle while a label wraps on
+        this.rustleGain = ctx.createGain();
+        this.rustleGain.gain.value = 0;
+        this.rustleGain.connect(this.master);
+        const rustle = ctx.createBiquadFilter();
+        rustle.type = 'bandpass';
+        rustle.frequency.value = 3400;
+        rustle.Q.value = 0.7;
+        loopNoise(0.7).connect(rustle);
+        rustle.connect(this.rustleGain);
       },
 
-      // A short pure tone that fades out (building block for metal "ting" sounds)
       ping(freq, time, duration, volume, type = 'sine') {
         const ctx = this.ctx;
         const osc = ctx.createOscillator();
@@ -1448,10 +1754,8 @@
         g.connect(this.master);
         osc.start(time);
         osc.stop(time + duration + 0.05);
-        return osc;
       },
 
-      // A short burst of filtered noise (clicks, thuds)
       burst(time, duration, volume, filterType, freq, q = 0.8) {
         const ctx = this.ctx;
         const src = ctx.createBufferSource();
@@ -1470,8 +1774,21 @@
         src.stop(time + duration + 0.05);
       },
 
-      // Chain links knocking together
-      clink(strength = 1) {
+      thud(from, to, duration, volume) {
+        const ctx = this.ctx, t = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        osc.frequency.setValueAtTime(from, t);
+        osc.frequency.exponentialRampToValueAtTime(to, t + duration * 0.6);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(volume, t);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+        osc.connect(g);
+        g.connect(this.master);
+        osc.start(t);
+        osc.stop(t + duration + 0.05);
+      },
+
+      clink(strength = 1) {           // chain links
         if (!this.ctx) return;
         const t0 = this.ctx.currentTime;
         const hits = 2 + Math.floor(Math.random() * 2);
@@ -1486,8 +1803,7 @@
         }
       },
 
-      // The pull switch clicking
-      click() {
+      click() {                       // switches and buttons
         if (!this.ctx) return;
         const t = this.ctx.currentTime;
         this.burst(t, 0.025, 0.35, 'bandpass', 1900, 1.2);
@@ -1495,43 +1811,52 @@
         this.burst(t + 0.07, 0.02, 0.2, 'bandpass', 2400, 1.2);
       },
 
-      // The lid pressing onto the can
-      clunk() {
+      clunk() {                       // lid pressed on
         if (!this.ctx) return;
-        const ctx = this.ctx, t = ctx.currentTime;
-        const osc = ctx.createOscillator();
-        osc.frequency.setValueAtTime(170, t);
-        osc.frequency.exponentialRampToValueAtTime(60, t + 0.12);
-        const g = ctx.createGain();
-        g.gain.setValueAtTime(0.55, t);
-        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
-        osc.connect(g);
-        g.connect(this.master);
-        osc.start(t);
-        osc.stop(t + 0.3);
+        this.thud(170, 60, 0.22, 0.55);
+        const t = this.ctx.currentTime;
         this.burst(t, 0.06, 0.4, 'lowpass', 900);
         this.ping(3100, t, 0.09, 0.05);
       },
 
-      // A can landing on the belt
-      tock(strength = 1) {
+      thump() {                       // stamp
         if (!this.ctx) return;
-        const ctx = this.ctx, t = ctx.currentTime;
-        const osc = ctx.createOscillator();
-        osc.frequency.setValueAtTime(520, t);
-        osc.frequency.exponentialRampToValueAtTime(320, t + 0.08);
-        const g = ctx.createGain();
-        g.gain.setValueAtTime(0.22 * strength, t);
-        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
-        osc.connect(g);
-        g.connect(this.master);
-        osc.start(t);
-        osc.stop(t + 0.15);
-        this.burst(t, 0.03, 0.15 * strength, 'bandpass', 1300);
+        this.thud(120, 55, 0.2, 0.5);
+        this.burst(this.ctx.currentTime, 0.05, 0.3, 'lowpass', 600);
       },
 
-      // Called every frame with the belt speed (0..1) and pour state
-      update(beltLevel, pouring, fill) {
+      clank(strength = 1) {           // metal on nothing
+        if (!this.ctx) return;
+        const t = this.ctx.currentTime;
+        this.ping(620, t, 0.18, 0.08 * strength, 'triangle');
+        this.ping(1430, t, 0.12, 0.05 * strength);
+        this.burst(t, 0.03, 0.2 * strength, 'bandpass', 2200, 1.5);
+      },
+
+      tock(strength = 1) {            // can landing
+        if (!this.ctx) return;
+        this.thud(520, 320, 0.12, 0.22 * strength);
+        this.burst(this.ctx.currentTime, 0.03, 0.15 * strength, 'bandpass', 1300);
+      },
+
+      ching(strength = 1) {           // money
+        if (!this.ctx) return;
+        const t = this.ctx.currentTime;
+        this.ping(2350, t, 0.25, 0.06 * strength);
+        this.ping(3520, t + 0.05, 0.3, 0.05 * strength);
+        this.ping(4700, t + 0.05, 0.15, 0.02 * strength);
+      },
+
+      buy() {
+        if (!this.ctx) return;
+        const t = this.ctx.currentTime;
+        this.burst(t, 0.02, 0.3, 'bandpass', 1500, 1.4);
+        this.ping(880, t, 0.08, 0.08, 'triangle');
+        this.ping(1320, t + 0.06, 0.12, 0.07);
+      },
+
+      // Called every frame
+      update(beltLevel, pouring, fill, rustling) {
         if (!this.ctx) return;
         const t = this.ctx.currentTime;
         if (Math.abs(beltLevel - this.last.hum) > 0.01) {
@@ -1546,306 +1871,687 @@
         }
         if (Math.abs(fill - this.last.pitch) > 0.01) {
           this.last.pitch = fill;
-          this.pourFilter.frequency.setTargetAtTime(450 + fill * 1300, t, 0.1);
+          this.pourFilter.frequency.setTargetAtTime(450 + Math.min(1.1, fill) * 1300, t, 0.1);
+        }
+        const rustleLevel = rustling ? 1 : 0;
+        if (rustleLevel !== this.last.rustle) {
+          this.last.rustle = rustleLevel;
+          this.rustleGain.gain.setTargetAtTime(rustleLevel * 0.12, t, 0.05);
         }
       },
     };
 
     /* =====================================================================
-       14. THE MACHINE SEQUENCE (a simple "state machine")
-       idle -> toFill -> filling -> capping -> toEnd -> runout -> arriving -> idle
+       12. THE LINE IN MOTION
+       The button moves the belt exactly one station. A can won't leave a
+       station until that station's job has been done to it, and cans
+       queue up behind each other.
        ===================================================================== */
 
-    const machine = {
-      state: 'arriving',  // the first can drops in when the page loads
-      t: 0,               // seconds spent in the current state
-      can: null,          // the can currently on the belt
-      beltSpeed: 0,
-      lamp: 0,            // indicator lamp brightness 0..1
-      flicker: 0,         // seconds of start-up flicker left
-      nozzleY: 0,         // nozzle slide offset
-      nozzleTarget: 0,
-    };
+    const belt = { indexing: false, t: 0, s: 0, speed: 0 };
 
-    function go(state) {
-      machine.state = state;
-      machine.t = 0;
-    }
-
-    function spawnCan() {
-      machine.can = new Can();
-      machine.can.appear();
-    }
-
-    // Called when the chain is tugged. Returns true if a new cycle started.
-    function startCycle() {
-      if (machine.state !== 'idle' || !machine.can) return false; // ignore pulls while busy
-      machine.pourStarted = false;
-      machine.pourStopped = false;
-      machine.flicker = 0.45;
-      go('toFill');
+    function startIndex() {
+      if (belt.indexing) return false;
+      belt.indexing = true;
+      belt.t = 0;
+      belt.s = 0;
       return true;
     }
 
-    function updateMachine(dt) {
-      const m = machine;
-      const can = m.can;
-      m.t += dt;
+    // The can sitting at station i (if any)
+    function canAt(i) {
+      const x = bayX(i);
+      for (const c of cans) if (c.state === 'belt' && Math.abs(c.x - x) < 0.03) return c;
+      return null;
+    }
 
-      switch (m.state) {
-        case 'idle':
-          m.beltSpeed = 0;
-          break;
+    // Does station i still have a job to do on this can?
+    function requires(i, c) {
+      if (i === ST.FILL) return !c.filledDone;
+      if (i === ST.CAP) return !c.capped;
+      if (i === ST.LABEL) return !c.labeled;
+      if (i === ST.STAMP) return !c.stamped;
+      return false;
+    }
 
-        // 1) Carry the empty can along the belt to the nozzle (eased start and stop)
-        case 'toFill': {
-          const k = clamp01(m.t / TIMING.toFill);
-          const s = lerp(SPOT.canStart, SPOT.fill, Ease.inOutSine(k));
-          m.beltSpeed = dt > 0 ? (s - can.s) / dt : 0; // belt moves exactly as fast as the can
-          can.s = s;
-          if (k >= 1) { m.beltSpeed = 0; go('filling'); }
-          break;
+    function moveCans(ds, speed) {
+      if (ds <= 0) return;
+      const end = endX();
+      const n = bayCount();
+      const blockedAtEnd = game.own.crate && !crate.accepting();
+      const onBelt = cans.filter((c) => c.state === 'belt').sort((a, b) => b.x - a.x); // front first
+      let ahead = null;
+      for (const c of onBelt) {
+        let limit = c.x + ds;
+        for (let i = 1; i < n; i++) {
+          const sx = bayX(i);
+          if (sx >= c.x - 0.001 && requires(i, c)) { limit = Math.min(limit, sx); break; }
         }
-
-        // 2) Pour: nozzle dips, stream falls, liquid rises
-        case 'filling': {
-          const t = m.t;
-          can.xray = Ease.inOutSine(clamp01(t / 0.7));  // label turns see-through so we can watch
-          if (!m.pourStopped) m.nozzleTarget = -0.05;
-          if (!m.pourStarted && t >= TIMING.pourDelay) { m.pourStarted = true; stream.start(); }
-          const fillProgress = (t - TIMING.fillStart) / TIMING.fillDuration;
-          can.fill = Ease.inOutSine(clamp01(fillProgress));
-          if (fillProgress >= 1 && !m.pourStopped) {
-            m.pourStopped = true;
-            stream.stop();
-            m.nozzleTarget = 0.06; // lift the nozzle to make room for the lid
+        if (ahead) limit = Math.min(limit, ahead.x - SPACING);
+        if (blockedAtEnd) limit = Math.min(limit, end - 0.04);
+        if (limit > c.x) c.x = limit;
+        if (!blockedAtEnd && c.x >= end - 0.04) {
+          if (game.own.crate) crate.receive(c);
+          else {
+            c.startFall(speed);
+            earn(canValue(c), c.group.position.clone().add(_tmp.set(0, 0.9, 0)));
           }
-          if (m.pourStopped && t >= TIMING.fillStart + TIMING.fillDuration + 0.7) go('capping');
-          break;
+          continue; // it left the belt, so it doesn't block the can behind it
         }
+        ahead = c;
+      }
+    }
 
-        // 3) Lid pops into place
-        case 'capping': {
-          const t = m.t;
-          const pop = clamp01(t / 0.22);
-          const drop = clamp01((t - 0.32) / 0.14);
-          can.lid.visible = true;
-          can.lid.scale.setScalar(Math.max(0.001, Ease.outBack(pop)));
-          can.lid.position.y = CAN.height - 0.004 + 0.2 * (1 - Ease.inQuad(drop));
-          if (drop >= 1 && !can.lidOn) {
-            can.lidOn = true;
-            can.squash = 1;
-            m.lidLandedAt = t;
-            m.nozzleTarget = 0;
-            Sound.clunk();
-          }
-          if (can.lidOn) can.xray = 1 - Ease.inOutSine(clamp01((t - m.lidLandedAt) / 0.6));
-          if (can.lidOn && t - m.lidLandedAt > 0.75) go('toEnd');
-          break;
-        }
+    function updateBelt(dt) {
+      let ds = 0;
+      if (belt.indexing) {
+        belt.t += dt;
+        const k = clamp01(belt.t / indexTime());
+        const s = BAY * Ease.inOutSine(k);
+        ds = s - belt.s;
+        belt.s = s;
+        if (k >= 1) belt.indexing = false;
+      }
+      belt.speed = dt > 0 ? ds / dt : 0;
+      TEX.belt.offset.x -= ds / BELT.tile;
+      for (const roller of rollers) roller.rotation.z -= ds / R;
+      moveCans(ds, belt.speed);
+    }
 
-        // 4) Carry the full can to the end of the belt
-        case 'toEnd': {
-          m.beltSpeed = BELT.cruiseSpeed * Ease.inOutSine(clamp01(m.t / TIMING.beltRampUp));
-          can.s += m.beltSpeed * dt;
-          if (can.s >= SPOT.dropOff) {
-            can.startFall(m.beltSpeed);
-            Sound.tock(0.45);
-            m.can = null;
-            go('runout');
-          }
-          break;
-        }
+    // Chain tug: drop an empty can, if there's room under the magazine
+    function dispense() {
+      const x = bayX(ST.DROP);
+      if (cans.some((c) => c.state === 'belt' && Math.abs(c.x - x) < SPACING)) { Sound.clank(0.4); return; }
+      const c = new Can(x);
+      c.appear(MAG_BOTTOM - SURFACE);
+    }
 
-        // 5) Belt slows to a stop, then a new can appears
-        case 'runout': {
-          m.beltSpeed = BELT.cruiseSpeed * (1 - Ease.inOutSine(clamp01(m.t / TIMING.beltRampDown)));
-          if (m.t >= TIMING.beltRampDown + 0.15) {
-            m.beltSpeed = 0;
-            spawnCan();
-            go('arriving');
-          }
-          break;
-        }
+    // Money in, with a little number where it happened
+    function earn(amount, worldPos) {
+      if (amount <= 0.0001) return;
+      game.money += amount;
+      game.seen.money = true;
+      showPop(worldPos, amount);
+      Sound.ching(Math.min(1, 0.5 + Math.log10(1 + amount) * 0.2));
+    }
 
-        // 6) Wait for the new can to settle, then accept chain pulls again
-        case 'arriving':
-          m.beltSpeed = 0;
-          if (!m.can) spawnCan();
-          if (!m.can.appearing && m.t > 0.2) go('idle');
-          break;
+    function showPop(worldPos, amount) {
+      const v = worldPos.clone().project(camera);
+      if (v.z > 1) return;
+      const el = document.createElement('div');
+      el.className = 'pop';
+      el.textContent = '+' + fmt(amount);
+      el.style.left = ((v.x + 1) / 2) * window.innerWidth + 'px';
+      el.style.top = ((1 - v.y) / 2) * window.innerHeight + 'px';
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 1700);
+    }
+
+    // --- Filler: hold the lever to pour into the can below
+    const valve = { open: false };
+    let nozzleY = 0, fillLamp = 0;
+
+    function closeValve() {
+      if (!valve.open) return;
+      valve.open = false;
+      const c = canAt(ST.FILL);
+      if (c && c.fill > 0.02) c.filledDone = true;
+    }
+
+    function updateFiller(dt, time) {
+      const c = canAt(ST.FILL);
+      for (const can of cans) can.xrayTarget = 0;
+      if (c && !c.capped) c.xrayTarget = 1;
+
+      // where the stream lands: the liquid, a lid, or the bare belt
+      let surfaceY = SURFACE + 0.005;
+      if (c) surfaceY = c.capped ? CAN_TOP + 0.02 : c.levelWorldY();
+
+      if (valve.open && stream.phase !== 'falling' && stream.phase !== 'flowing') stream.start();
+      if (!valve.open) stream.stop();
+
+      nozzleY = damp(nozzleY, valve.open ? -0.04 : 0, 8, dt);
+      nozzleSpout.position.y = FILL.housingBottom + nozzleY;
+      valveLever.rotation.x = damp(valveLever.rotation.x, valve.open ? 0.6 : 0, 14, dt);
+      stream.update(dt, time, FILL.x, FILL.tipY + nozzleY, surfaceY);
+
+      if (valve.open && c && !c.capped && stream.hitting) {
+        c.fill = Math.min(1.2, c.fill + pourRate() * dt);
+        c.maxFill = Math.max(c.maxFill, c.fill);
+      }
+      if (stream.phase === 'flowing' && Math.random() < 0.8) {
+        splash.emit(FILL.x + rand(-0.02, 0.02), surfaceY, rand(-0.02, 0.02), rand(-0.35, 0.35), rand(0.4, 0.9), rand(-0.35, 0.35), rand(0.2, 0.4));
+      }
+      if (c && c.fill > 1 && stream.hitting) { // too full: foam over the rim
+        const a = rand(0, Math.PI * 2);
+        splash.emit(FILL.x + Math.cos(a) * 0.19, CAN_TOP + 0.01, Math.sin(a) * 0.19, Math.cos(a) * 0.3, 0.15, Math.sin(a) * 0.3, 0.5);
       }
 
-      // Indicator lamp: on while the machine works, with a little flicker at start-up
-      const working = ['toFill', 'filling', 'capping', 'toEnd'].includes(m.state)
-        || (m.state === 'runout' && m.t < TIMING.beltRampDown);
-      let lampTarget = working ? 1 : 0;
-      if (m.flicker > 0) {
-        m.flicker -= dt;
-        lampTarget = Math.floor(m.flicker * 22) % 2 ? 1 : 0.15;
-      }
-      m.lamp = damp(m.lamp, lampTarget, 18, dt);
-      lampMaterial.emissiveIntensity = 0.03 + m.lamp * 7;
-      lampLight.intensity = m.lamp * 1.6;
+      fillLamp = damp(fillLamp, valve.open ? 1 : 0, 14, dt);
+      fillLampMat.emissiveIntensity = 0.03 + fillLamp * 7;
+      fillLampLight.intensity = fillLamp * 1.6;
+    }
 
-      // Nozzle slides smoothly toward its target
-      m.nozzleY = damp(m.nozzleY, m.nozzleTarget, 7, dt);
-      nozzleSpout.position.y = STATION.housingBottom + m.nozzleY;
+    // --- Capper: pull the knob all the way down to press the held lid onto the can
+    const press = new PressHandle(CAPPER.travel);
+    let pressFired = false, lidPop = 1;
+
+    function updateCapper(dt) {
+      if (!game.own.cap) return;
+      press.update(dt);
+      pressMove.position.y = -Math.max(0, press.p) * CAPPER.travel;
+      if (press.p > 0.96 && !pressFired) {
+        pressFired = true;
+        const c = canAt(ST.CAP);
+        if (c && !c.capped && heldLid.visible) {
+          c.capped = true;
+          c.lid.visible = true;
+          c.squash = 1;
+          heldLid.visible = false;
+          Sound.clunk();
+        } else {
+          Sound.clank(0.7);
+        }
+      }
+      if (press.p < 0.5) pressFired = false;
+      if (!heldLid.visible && press.p < 0.15) { heldLid.visible = true; lidPop = 0; } // next lid pops in
+      if (lidPop < 1) {
+        lidPop = Math.min(1, lidPop + dt / 0.3);
+        heldLid.scale.setScalar(Math.max(0.01, Ease.outBack(lidPop)));
+      }
+    }
+
+    // --- Labeler: hold the roll; the can turns and the label wraps on
+    const labeler = { held: false, spin: 0 };
+    let rustling = false;
+
+    function updateLabeler(dt) {
+      rustling = false;
+      if (!game.own.label) return;
+      labeler.spin = damp(labeler.spin, labeler.held ? 1 : 0, 10, dt);
+      if (labeler.spin < 0.01) return;
+      const turn = labeler.spin * labelRate() * Math.PI * 2 * dt;
+      labelRoll.rotation.y += turn * (CAN.radius / 0.17);
+      labelCrank.rotation.y += turn * (CAN.radius / 0.17);
+      const c = canAt(ST.LABEL);
+      if (c && !c.labeled) {
+        c.labelProgress = Math.min(1, c.labelProgress + labeler.spin * labelRate() * dt);
+        rustling = labeler.spin > 0.2;
+        if (c.labelProgress >= 1) { c.labeled = true; Sound.click(); }
+      }
+    }
+
+    // --- Stamper: one press of the button, one stamp
+    const stamper = { t: -1, hit: false };
+
+    function triggerStamp() {
+      if (stamper.t >= 0) return;
+      stamper.t = 0;
+      stamper.hit = false;
+      Sound.click();
+    }
+
+    function updateStamper(dt) {
+      if (!game.own.stamp) return;
+      let y = 0;
+      if (stamper.t >= 0) {
+        stamper.t += dt;
+        const t = stamper.t;
+        if (t < 0.11) y = Ease.inQuad(t / 0.11);
+        else if (t < 0.2) y = 1;
+        else if (t < 0.5) y = 1 - Ease.outCubic((t - 0.2) / 0.3);
+        else stamper.t = -1;
+        if (t >= 0.11 && !stamper.hit) {
+          stamper.hit = true;
+          const c = canAt(ST.STAMP);
+          if (c) { c.stamped = true; c.mark.visible = true; c.squash = 0.4; Sound.thump(); }
+          else Sound.clank(0.6);
+        }
+      }
+      stampMove.position.y = -y * STAMPER.travel;
+      const pressed = stamper.t >= 0 && stamper.t < 0.25;
+      stampButton.position.y = damp(stampButton.position.y, stampButtonBaseY - (pressed ? 0.018 : 0), 30, dt);
+    }
+
+    // --- Crate: catches up to six cans; click it to shove it off the shelf and sell them
+    const crate = {
+      state: 'ready',    // 'ready' | 'shipping' | 'returning'
+      t: 0,
+      cans: [],
+      incoming: 0,
+      vx: 0,
+      vy: 0,
+      accepting() {
+        return game.own.crate && this.state === 'ready' && this.cans.length + this.incoming < 6;
+      },
+      slotLocal(i, out) {
+        return out.set(-0.52 + (i % 3) * 0.52, 0.03, i < 3 ? 0.26 : -0.26);
+      },
+      slotWorld(i, out) {
+        return crateTray.localToWorld(this.slotLocal(i, out));
+      },
+      receive(c) {
+        c.state = 'crating';
+        c.slot = this.cans.length + this.incoming;
+        this.incoming++;
+        c.crateT = 0;
+        c.crateFrom = c.group.position.clone();
+      },
+      land(c) {
+        this.incoming--;
+        crateTray.attach(c.group);
+        this.slotLocal(c.slot, c.group.position);
+        c.state = 'crated';
+        this.cans.push(c);
+        Sound.tock(0.6);
+      },
+      ship() {
+        if (this.state !== 'ready' || this.cans.length === 0 || this.incoming > 0) return;
+        let total = 0;
+        for (const c of this.cans) total += canValue(c);
+        earn(total * 1.6, crateTray.getWorldPosition(new THREE.Vector3()).add(_tmp.set(0, 0.7, 0)));
+        this.state = 'shipping';
+        this.t = 0;
+        this.vx = 0;
+        this.vy = 0;
+        Sound.clunk();
+      },
+      update(dt) {
+        if (this.state === 'shipping') {
+          this.t += dt;
+          this.vx += 3.0 * dt;                      // shove
+          if (this.t > 0.35) {
+            this.vy -= 9.5 * dt;                    // off the edge
+            crateTray.rotation.z -= 0.9 * dt;
+          }
+          crateTray.position.x += this.vx * dt;
+          crateTray.position.y += this.vy * dt;
+          const o = 1 - Ease.inQuad(clamp01((this.t - 0.3) / 1.3));
+          MAT.crate.opacity = o;
+          for (const c of this.cans) c.opacity = o;
+          if (this.t > 1.7) {
+            for (const c of this.cans) c.dispose();
+            this.cans = [];
+            crateTray.position.set(CRATE_OFF, SHELF_Y, 0);
+            crateTray.rotation.set(0, 0, 0);
+            MAT.crate.opacity = 1;
+            riseUp(crateTray, 0.2, SHELF_Y);        // a fresh crate comes up
+            this.state = 'returning';
+            this.t = 0;
+          }
+        } else if (this.state === 'returning') {
+          this.t += dt;
+          if (this.t > 2.1) this.state = 'ready';
+        }
+      },
+    };
+
+    /* =====================================================================
+       13. BUILD THE WORLD (from the save, if there is one)
+       ===================================================================== */
+
+    loadGame();
+    for (let i = 0; i < 5; i++) segments.push(buildSegment(i));
+    const stations = [buildDispenser(), buildFiller(), buildCapper(), buildLabeler(), buildStamper()];
+    const crateGroup = buildCrate();
+    for (let i = 0; i < stations.length; i++) {
+      const owned = i < bayCount();
+      segments[i].visible = owned;
+      stations[i].group.visible = owned;
+    }
+    crateGroup.visible = game.own.crate;
+    endCapTarget = endX();
+    endCap.position.x = endCapTarget;
+
+    const chain = new PullChain(CHAIN_TOP, 1.4);
+    chain.onTug = () => { Sound.click(); dispense(); };
+
+    /* =====================================================================
+       14. SHOP (icons and numbers only)
+       ===================================================================== */
+
+    const ICONS = {
+      drop: '<path d="M12 3.5c3 4 5.5 7 5.5 10a5.5 5.5 0 0 1-11 0c0-3 2.5-6 5.5-10z"/>',
+      gear: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="6.5"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
+      tap: '<path d="M4 8h9a3 3 0 0 1 3 3v2"/><path d="M8 5v3M6 5h4"/><path d="M16 15.5c.9 1.2 1.6 2 1.6 2.8a1.6 1.6 0 0 1-3.2 0c0-.8.7-1.6 1.6-2.8z"/>',
+      can: '<ellipse cx="12" cy="5.5" rx="5" ry="1.6"/><path d="M7 5.5v13c0 .9 2.2 1.6 5 1.6s5-.7 5-1.6v-13"/>',
+      wave: '<path d="M3 8h18M3 18h18"/><path d="M3 13c2.2-3 4.3-3 6.5 0s4.3 3 6.5 0 3.3-2 5-1"/>',
+      press: '<circle cx="12" cy="3.2" r="1.4"/><path d="M12 4.6v4"/><rect x="7.5" y="8.6" width="9" height="2.6" rx=".6"/><path d="M8.5 14h7v6.5h-7z"/>',
+      label: '<path d="M8 4h8v16H8z"/><path d="M8 10h8M8 14.5h8"/><path d="M16 10c2 0 3 1 3 2.25S18 14.5 16 14.5"/>',
+      stamp: '<path d="M9.5 3.5h5v3l-1 3h-3l-1-3z"/><path d="M6 12h12v3H6z"/><path d="M7 19h10"/>',
+      six: '<rect x="3" y="5.5" width="18" height="13" rx="1"/><circle cx="7.5" cy="9.5" r="1.8"/><circle cx="12" cy="9.5" r="1.8"/><circle cx="16.5" cy="9.5" r="1.8"/><circle cx="7.5" cy="14.5" r="1.8"/><circle cx="12" cy="14.5" r="1.8"/><circle cx="16.5" cy="14.5" r="1.8"/>',
+    };
+
+    const moneyEl = document.getElementById('money');
+    const moneyText = moneyEl.querySelector('span');
+    const shopEl = document.getElementById('shop');
+    const tiles = {};
+
+    for (const item of SHOP) {
+      const el = document.createElement('div');
+      el.className = 'tile';
+      el.hidden = true;
+      el.innerHTML = `<svg viewBox="0 0 24 24">${ICONS[item.icon]}</svg><span class="c"></span>`
+        + (item.max ? `<span class="p">${'<b></b>'.repeat(item.max)}</span>` : '');
+      el.addEventListener('click', () => buy(item));
+      el.addEventListener('animationend', () => el.classList.remove('flash'));
+      shopEl.appendChild(el);
+      tiles[item.id] = { el, cost: el.querySelector('.c'), pips: el.querySelectorAll('.p b') };
+    }
+
+    // A tile shows up once you can nearly afford it, and stays.
+    function itemVisible(item) {
+      if (ONE_TIME.has(item.id) && game.own[item.id]) return false;
+      if (item.after && !game.own[item.after]) return false;
+      if (game.seen[item.id]) return true;
+      if (game.money >= itemCost(item) * 0.5) { game.seen[item.id] = true; return true; }
+      return false;
+    }
+
+    function refreshShop() {
+      for (const item of SHOP) {
+        const t = tiles[item.id];
+        const visible = itemVisible(item);
+        if (t.el.hidden === visible) t.el.hidden = !visible;
+        if (!visible) continue;
+        const maxed = item.max && game.lv[item.id] >= item.max;
+        const cost = itemCost(item);
+        t.el.classList.toggle('ok', !maxed && game.money >= cost);
+        t.el.classList.toggle('max', !!maxed);
+        const text = maxed ? '' : fmt(cost);
+        if (t.cost.textContent !== text) t.cost.textContent = text;
+        if (item.max) t.pips.forEach((pip, i) => pip.classList.toggle('f', i < game.lv[item.id]));
+      }
+      const text = fmt(game.money);
+      if (moneyText.textContent !== text) moneyText.textContent = text;
+      if (game.seen.money) moneyEl.classList.add('on');
+    }
+
+    function buy(item) {
+      if (ONE_TIME.has(item.id) ? game.own[item.id] : game.lv[item.id] >= item.max) return;
+      const cost = itemCost(item);
+      if (game.money < cost) return;
+      game.money -= cost;
+      if (ONE_TIME.has(item.id)) {
+        game.own[item.id] = true;
+        onStationBought(item);
+      } else {
+        game.lv[item.id]++;
+      }
+      Sound.buy();
+      const el = tiles[item.id].el;
+      el.classList.remove('flash');
+      void el.offsetWidth; // restart the flash animation
+      el.classList.add('flash');
+      refreshShop();
+      saveGame();
+    }
+
+    // A new station rises out of the dark and the camera drifts over to it
+    function onStationBought(item) {
+      if (item.station !== undefined) {
+        riseUp(segments[item.station]);
+        riseUp(stations[item.station].group, 0.3);
+        endCapTarget = endX();
+        view.tx = bayX(item.station);
+      } else if (item.id === 'crate') {
+        riseUp(crateGroup);
+        crateTray.visible = true;
+        view.tx = endX() + 0.8;
+      }
+      updatePanLimits();
     }
 
     /* =====================================================================
-       15. INPUT (mouse) AND CAMERA CONTROLS
+       15. CAMERA: pan along the line, zoom, and a little orbit
+       ===================================================================== */
+
+    const view = {
+      x: 0, tx: 0,
+      dist: VIEW.startDist, tdist: VIEW.startDist,
+      az: VIEW.azimuth, taz: VIEW.azimuth,
+      pol: VIEW.polar, tpol: VIEW.polar,
+      minX: 0, maxX: 0,
+    };
+
+    function updatePanLimits() {
+      view.minX = START_X + 0.3;
+      view.maxX = Math.max(view.minX, endX() + (game.own.crate ? 1.6 : 0) - 0.3);
+    }
+    updatePanLimits();
+    view.x = view.tx = clamp((START_X + endX()) / 2, view.minX, view.maxX);
+
+    const camTarget = new THREE.Vector3();
+    const worldPerPixel = () => (2 * view.dist * Math.tan(deg(camera.fov / 2))) / window.innerHeight;
+
+    function updateCamera(dt) {
+      view.tx = clamp(view.tx, view.minX, view.maxX);
+      view.tdist = clamp(view.tdist, VIEW.minDist, VIEW.maxDist);
+      view.taz = clamp(view.taz, VIEW.azimuth - VIEW.orbitSide, VIEW.azimuth + VIEW.orbitSide);
+      view.tpol = clamp(view.tpol, VIEW.polar - VIEW.orbitUp, VIEW.polar + VIEW.orbitUp);
+      view.x = damp(view.x, view.tx, 7, dt);
+      view.dist = damp(view.dist, view.tdist, 7, dt);
+      view.az = damp(view.az, view.taz, 8, dt);
+      view.pol = damp(view.pol, view.tpol, 8, dt);
+
+      const zoomT = (view.dist - VIEW.minDist) / (VIEW.maxDist - VIEW.minDist);
+      camTarget.set(view.x, lerp(1.75, 1.25, zoomT), lerp(0, 0.2, zoomT));
+      camera.position.setFromSphericalCoords(view.dist, view.pol, view.az).add(camTarget);
+      camera.lookAt(camTarget);
+
+      // the spotlight, its beam and the rim light follow along
+      keyLight.target.position.set(view.x, 1.5, 0);
+      keyLight.position.copy(keyLight.target.position).add(KEY_OFFSET);
+      rimLight.target.position.set(view.x, 1.4, 0);
+      rimLight.position.copy(rimLight.target.position).add(RIM_OFFSET);
+      beam.position.copy(keyLight.position);
+      scene.fog.density = FOG_DENSITY * (FOG_REF / view.dist);
+    }
+
+    /* =====================================================================
+       16. INPUT
+       Click and drag the machine's parts. Drag empty space to slide along
+       the line; right-drag to tilt; scroll or pinch to zoom.
        ===================================================================== */
 
     const canvas = renderer.domElement;
     const raycaster = new THREE.Raycaster();
-    const pointerNdc = new THREE.Vector2();
-    let dragPointerId = null;
+    const ndc = new THREE.Vector2();
+    const interactives = [];
+    let runPressed = false;
 
-    const chain = new PullChain(CHAIN_TOP);
-    const hint = document.getElementById('hint');
-    let hintHidden = false;
-
-    chain.onTug = () => {
-      Sound.click();
-      if (startCycle() && !hintHidden) {
-        hintHidden = true;
-        hint.classList.add('gone');
+    function addControl(hits, control) {
+      for (const hit of [].concat(hits)) {
+        hit.userData.control = control;
+        interactives.push(hit);
       }
-    };
+    }
 
-    function rayFromEvent(e) {
+    addControl(chain.hitArea, {
+      cursor: 'grab', enabled: () => true,
+      down: (ray) => chain.beginDrag(ray), move: (ray) => chain.drag(ray), up: () => chain.endDrag(),
+    });
+    addControl(stations[ST.DROP].runHit, {
+      cursor: 'pointer', enabled: () => true,
+      down: () => { runPressed = true; Sound.click(); startIndex(); }, up: () => { runPressed = false; },
+    });
+    addControl(stations[ST.FILL].valveHit, {
+      cursor: 'pointer', enabled: () => true,
+      down: () => { valve.open = true; Sound.click(); }, up: () => closeValve(),
+    });
+    addControl(stations[ST.CAP].knobHit, {
+      cursor: 'grab', enabled: () => game.own.cap,
+      down: (ray) => press.beginDrag(ray, stations[ST.CAP].knobHit.getWorldPosition(new THREE.Vector3())),
+      move: (ray) => press.drag(ray), up: () => press.endDrag(),
+    });
+    addControl(stations[ST.LABEL].hits, {
+      cursor: 'pointer', enabled: () => game.own.label,
+      down: () => { labeler.held = true; }, up: () => { labeler.held = false; },
+    });
+    addControl(stations[ST.STAMP].hits, {
+      cursor: 'pointer', enabled: () => game.own.stamp,
+      down: () => triggerStamp(),
+    });
+    addControl(crateHit, {
+      cursor: 'pointer',
+      enabled: () => game.own.crate && crate.state === 'ready' && crate.cans.length > 0 && crate.incoming === 0,
+      down: () => crate.ship(),
+    });
+
+    function setRay(e) {
       const rect = canvas.getBoundingClientRect();
-      pointerNdc.set(
-        ((e.clientX - rect.left) / rect.width) * 2 - 1,
-        -((e.clientY - rect.top) / rect.height) * 2 + 1
-      );
-      raycaster.setFromCamera(pointerNdc, camera);
-      return raycaster.ray;
+      ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      raycaster.setFromCamera(ndc, camera);
     }
 
-    function isOverChain(e) {
-      rayFromEvent(e);
-      return raycaster.intersectObject(chain.hitArea, false).length > 0;
+    function pickControl(e) {
+      setRay(e);
+      for (const hit of raycaster.intersectObjects(interactives, false)) {
+        const control = hit.object.userData.control;
+        if (control.enabled()) return control;
+      }
+      return null;
     }
 
-    // NOTE: this listener is added BEFORE the OrbitControls are created, so it runs first
-    // and can switch the camera controls off when you grab the chain.
+    let drag = null; // what the pointer is currently doing
+
     canvas.addEventListener('pointerdown', (e) => {
       Sound.unlock();
-      if (dragPointerId !== null || !e.isPrimary) return;
-      if (isOverChain(e)) {
-        controls.enabled = false;
-        dragPointerId = e.pointerId;
-        canvas.setPointerCapture(e.pointerId);
-        chain.beginDrag(raycaster.ray);
+      if (drag) return;
+      const control = e.button === 0 ? pickControl(e) : null;
+      canvas.setPointerCapture(e.pointerId);
+      if (control) {
+        drag = { kind: 'control', control, id: e.pointerId };
+        control.down(raycaster.ray);
+        if (control.cursor === 'grab') canvas.style.cursor = 'grabbing';
+      } else {
+        drag = { kind: e.button === 2 || e.shiftKey ? 'orbit' : 'pan', id: e.pointerId, x: e.clientX, y: e.clientY };
         canvas.style.cursor = 'grabbing';
       }
     });
 
     canvas.addEventListener('pointermove', (e) => {
-      if (e.pointerId === dragPointerId) {
-        chain.drag(rayFromEvent(e));
-      } else if (e.pointerType === 'mouse' && dragPointerId === null && e.buttons === 0) {
-        canvas.style.cursor = isOverChain(e) ? 'grab' : '';
+      if (drag && e.pointerId === drag.id) {
+        if (drag.kind === 'control') {
+          if (drag.control.move) { setRay(e); drag.control.move(raycaster.ray); }
+        } else {
+          const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+          drag.x = e.clientX;
+          drag.y = e.clientY;
+          if (drag.kind === 'pan') view.tx -= (dx * worldPerPixel()) / Math.cos(view.az);
+          else { view.taz -= dx * 0.004; view.tpol -= dy * 0.003; }
+        }
+        return;
+      }
+      if (e.pointerType === 'mouse' && !drag) {
+        const control = pickControl(e);
+        canvas.style.cursor = control ? control.cursor : '';
       }
     });
 
-    function endChainDrag(e) {
-      if (e.pointerId !== dragPointerId) return;
-      dragPointerId = null;
-      chain.endDrag();
-      controls.enabled = true;
+    function endDrag(e) {
+      if (!drag || (e && e.pointerId !== drag.id)) return;
+      if (drag.kind === 'control' && drag.control.up) drag.control.up();
+      if (e && canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+      drag = null;
       canvas.style.cursor = '';
-      if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
     }
-    canvas.addEventListener('pointerup', endChainDrag);
-    canvas.addEventListener('pointercancel', endChainDrag);
-    canvas.addEventListener('lostpointercapture', endChainDrag);
-
-    // Some browsers (iOS) only allow audio to start on a "tap up"
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+    canvas.addEventListener('lostpointercapture', endDrag);
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    window.addEventListener('blur', () => { endDrag(null); runPressed = false; });
     window.addEventListener('pointerup', () => Sound.unlock());
-    window.addEventListener('keydown', () => Sound.unlock());
 
-    // Gentle, limited orbit. No panning, and only a little zoom.
-    const controls = new OrbitControls(camera, canvas);
-    controls.target.copy(CAMERA_SETUP.target);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.06;
-    controls.enablePan = false;
-    controls.rotateSpeed = 0.35;
-    controls.zoomSpeed = 0.4;
-    controls.minPolarAngle = CAMERA_SETUP.polar - CAMERA_SETUP.orbitUp;
-    controls.maxPolarAngle = CAMERA_SETUP.polar + CAMERA_SETUP.orbitUp;
-    controls.minAzimuthAngle = CAMERA_SETUP.azimuth - CAMERA_SETUP.orbitSide;
-    controls.maxAzimuthAngle = CAMERA_SETUP.azimuth + CAMERA_SETUP.orbitSide;
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const scale = e.deltaMode === 1 ? 16 : 1;
+      const dx = e.deltaX * scale, dy = e.deltaY * scale;
+      if (!e.ctrlKey && Math.abs(dx) > Math.abs(dy)) view.tx += dx * worldPerPixel();   // sideways swipe
+      else if (e.shiftKey) view.tx += dy * worldPerPixel();                             // shift + wheel
+      else view.tdist *= Math.exp(dy * (e.ctrlKey ? 0.01 : 0.0012));                    // wheel / pinch
+    }, { passive: false });
+
+    const keys = new Set();
+    window.addEventListener('keydown', (e) => {
+      Sound.unlock();
+      keys.add(e.code);
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (!e.repeat) { runPressed = true; Sound.click(); startIndex(); }
+      }
+    });
+    window.addEventListener('keyup', (e) => {
+      keys.delete(e.code);
+      if (e.code === 'Space') runPressed = false;
+    });
+
+    function handleKeys(dt) {
+      const right = keys.has('ArrowRight') || keys.has('KeyD');
+      const left = keys.has('ArrowLeft') || keys.has('KeyA');
+      if (right !== left) view.tx += (right ? 1 : -1) * dt * 0.5 * view.dist;
+      if (keys.has('Equal') || keys.has('NumpadAdd')) view.tdist *= Math.exp(-dt * 1.5);
+      if (keys.has('Minus') || keys.has('NumpadSubtract')) view.tdist *= Math.exp(dt * 1.5);
+    }
 
     /* =====================================================================
-       16. WINDOW RESIZING
-       If the window gets narrow, the camera steps back a little so the
-       machine never gets cut off. Fog is adjusted to match.
+       17. RESIZE, SAVE, AND THE FRAME LOOP
        ===================================================================== */
 
     function onResize() {
-      const w = window.innerWidth, h = window.innerHeight;
-      camera.aspect = w / h;
-      const halfTan = Math.tan(deg(camera.fov / 2));
-      const fitDistance = Math.max(CAMERA_SETUP.distance, 19 / (2 * halfTan * camera.aspect));
-      controls.minDistance = fitDistance * 0.92;
-      controls.maxDistance = fitDistance * 1.08;
-      const dir = camera.position.clone().sub(controls.target).normalize();
-      camera.position.copy(controls.target).addScaledVector(dir, fitDistance);
+      camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
-
-      renderer.setSize(w, h);
-      composer.setSize(w, h);
-      dust.material.uniforms.uScale.value = h * pixelRatio * 0.5;
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      composer.setSize(window.innerWidth, window.innerHeight);
+      dust.material.uniforms.uScale.value = window.innerHeight * pixelRatio * 0.5;
     }
     window.addEventListener('resize', onResize);
     onResize();
 
-    /* =====================================================================
-       17. THE ANIMATION LOOP (runs every frame)
-       ===================================================================== */
+    setInterval(saveGame, 5000);
+    window.addEventListener('beforeunload', saveGame);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) saveGame(); });
 
     const clock = new THREE.Clock();
-    setTimeout(() => { if (!hintHidden) hint.classList.add('show'); }, 1600);
+    let shopTimer = 0, runLamp = 0;
+    refreshShop();
 
     renderer.setAnimationLoop(() => {
-      const dt = Math.min(clock.getDelta(), 1 / 20); // cap the step after tab switches
+      const dt = Math.min(clock.getDelta(), 1 / 20);
       const time = clock.elapsedTime;
 
-      controls.update();
+      handleKeys(dt);
+      updateCamera(dt);
+      updateRisers(dt);
+      endCap.position.x = damp(endCap.position.x, endCapTarget, 3, dt);
+
       chain.update(dt, time);
-      updateMachine(dt);
-      updateConveyor(machine.beltSpeed, dt);
+      updateBelt(dt);
+      updateFiller(dt, time);
+      updateCapper(dt);
+      updateLabeler(dt);
+      updateStamper(dt);
+      crate.update(dt);
       for (const can of [...cans]) can.update(dt);
+      splash.update(dt);
+      dust.update(dt, time, view.x, view.dist);
 
-      // The stream goes from the nozzle tip down to the liquid surface in the can under it
-      const tipY = STATION.nozzleTip.y + machine.nozzleY;
-      const pouringCan = machine.state === 'filling' ? machine.can : null;
-      const surfaceY = pouringCan ? pouringCan.levelWorldY() : tipY - 0.6;
-      stream.update(dt, time, tipY, surfaceY);
-      splash.update(dt, stream.hitting && stream.phase === 'flowing', STATION.x, surfaceY, STATION.nozzleTip.z);
+      // push button and its lamp
+      runButton.position.y = damp(runButton.position.y, runButtonBaseY - (runPressed ? 0.018 : 0), 30, dt);
+      runLamp = damp(runLamp, belt.indexing ? 1 : 0, 14, dt);
+      runLampMat.emissiveIntensity = 0.05 + runLamp * 3;
+      powerLedMat.emissiveIntensity = 2.0 + Math.sin(time * 2.2) * 0.25;
 
-      dust.update(dt, time);
-      powerLedMaterial.emissiveIntensity = 2.0 + Math.sin(time * 2.2) * 0.25;
+      const fillCan = canAt(ST.FILL);
+      const topSpeed = (BAY / indexTime()) * (Math.PI / 2);
+      Sound.update(clamp01(belt.speed / topSpeed), stream.hitting, fillCan ? fillCan.fill : 0, rustling);
 
-      Sound.update(
-        Math.min(1, Math.abs(machine.beltSpeed) / BELT.cruiseSpeed),
-        stream.hitting,
-        pouringCan ? pouringCan.fill : 0
-      );
-
-      // Keep the fog looking the same at any camera distance
-      scene.fog.density = FOG_DENSITY * (FOG_REFERENCE_DISTANCE / camera.position.distanceTo(controls.target));
+      shopTimer -= dt;
+      if (shopTimer <= 0) { shopTimer = 0.15; refreshShop(); }
 
       composer.render();
       window.__dioramaStarted = true;
     });
-
-    // Handy for debugging in the browser console
-    window.diorama = { machine, chain, startCycle, cans, camera, controls, THREE };
   </script>
 </body>
 </html>
