@@ -642,6 +642,24 @@
     }
     const fadingPaint = withDepthFade(MAT.paint.clone(), 0.7, -6.5);
 
+    // The opposite: fades to black higher up (the can magazine runs up out of sight)
+    function withUpFade(material, fadeStart, fadeEnd) {
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.uUpStart = { value: fadeStart };
+        shader.uniforms.uUpEnd = { value: fadeEnd };
+        shader.vertexShader = shader.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying float vWorldY;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWorldY = (modelMatrix * vec4(transformed, 1.0)).y;');
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', '#include <common>\nvarying float vWorldY;\nuniform float uUpStart;\nuniform float uUpEnd;')
+          .replace('#include <dithering_fragment>', '#include <dithering_fragment>\ngl_FragColor.rgb *= 1.0 - smoothstep(uUpStart, uUpEnd, vWorldY);');
+      };
+      return material;
+    }
+    const fadingChromeUp = withUpFade(MAT.chrome.clone(), 4.3, 7.6);
+    const fadingSteelUp = withUpFade(MAT.darkSteel.clone(), 4.3, 7.6);
+    const fadingAluUp = withUpFade(MAT.staticAlu.clone(), 4.3, 7.6);
+
     // Invisible shapes you can click (bigger than the real parts, so they're easy to hit)
     const HIT_MAT = new THREE.MeshBasicMaterial({ visible: false });
     function makeHit(geometry, parent, x = 0, y = 0, z = 0) {
@@ -686,11 +704,11 @@
       return g;
     }
 
-    // A plain decorative can (the spares waiting in the magazine)
-    function makeStaticCan() {
+    // A plain decorative can (the empties stacked in the magazine)
+    function makeStaticCan(material = MAT.staticAlu) {
       const g = new THREE.Group();
       const parts = [CAN_GEO.bottomRing, CAN_GEO.bottomCap, CAN_GEO.body, CAN_GEO.shoulder, CAN_GEO.neck, CAN_GEO.rim];
-      for (const geo of parts) addMesh(geo, MAT.staticAlu, g);
+      for (const geo of parts) addMesh(geo, material, g);
       return g;
     }
 
@@ -831,26 +849,63 @@
       gusset.rotation.x = deg(-45);
     }
 
-    // --- 7a. DROP: a magazine of empty cans, its pull chain, and the belt's push button
-    const MAG_BOTTOM = CAN_TOP + 0.2;                           // cans drop from here
+    // --- 7a. DROP: a gravity-fed magazine of empty cans (the stack runs up into the dark),
+    // a two-flap gate the bottom can rests on, hold pins for the can above it,
+    // the pull chain, and the belt's push button.
+    const MAG_BOTTOM = CAN_TOP + 0.2;                 // height of the gate
+    const MAG_RISE = 12;                              // the magazine runs up out of sight
+    const SLOT = 0.805;                               // one can-height in the stack
+    const SLOT0 = MAG_BOTTOM + 0.006;                 // base of the bottom can (sitting on the gate)
+    const STACK_COUNT = 7;
     const CHAIN_TOP = new THREE.Vector3(bayX(ST.DROP) + 0.62, 2.95, 0.92);
     let runButton, runButtonBaseY, runLampMat, powerLedMat;
+    let magStack;                                     // the stack of empties (slides down after each drop)
+    const magCans = [], gateFlaps = [], holdPins = [];
 
     function buildDispenser() {
       const g = new THREE.Group();
       const x = bayX(ST.DROP);
-      const magH = 1.75;
       addColumnAndArm(g, x, MAG_BOTTOM + 1.25, -0.27);
-      const rodGeo = new THREE.CylinderGeometry(0.014, 0.014, magH, 8);
+
+      // four guide rods and square rings, rising into the dark
+      const rodGeo = new THREE.CylinderGeometry(0.014, 0.014, MAG_RISE, 8);
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-        addMesh(rodGeo, MAT.chrome, g, { x: x + sx * 0.27, y: MAG_BOTTOM + magH / 2, z: sz * 0.27 });
+        addMesh(rodGeo, fadingChromeUp, g, { x: x + sx * 0.27, y: MAG_BOTTOM + MAG_RISE / 2, z: sz * 0.27 });
       }
       const ringGeo = new THREE.TorusGeometry(0.382, 0.018, 6, 4).rotateX(Math.PI / 2).rotateY(Math.PI / 4); // square ring
-      for (const y of [MAG_BOTTOM, MAG_BOTTOM + magH * 0.55, MAG_BOTTOM + magH]) addMesh(ringGeo, MAT.darkSteel, g, { x, y });
-      for (const y of [MAG_BOTTOM + 0.04, MAG_BOTTOM + 0.88]) {
-        const spare = makeStaticCan();
-        spare.position.set(x, y, 0);
-        g.add(spare);
+      for (let y = MAG_BOTTOM; y < MAG_BOTTOM + 9; y += 0.96) addMesh(ringGeo, fadingSteelUp, g, { x, y });
+
+      // the stack of empty cans waiting their turn
+      magStack = new THREE.Group();
+      for (let i = 0; i < STACK_COUNT; i++) {
+        const spare = makeStaticCan(fadingAluUp);
+        spare.position.set(x, SLOT0 + i * SLOT, 0);
+        magStack.add(spare);
+        magCans.push(spare);
+      }
+      g.add(magStack);
+
+      // the gate: two flaps under the bottom can that swing down to let it fall
+      const flapGeo = new THREE.BoxGeometry(0.16, 0.012, 0.3).translate(0.08, -0.006, 0);
+      const hingeGeo = new THREE.CylinderGeometry(0.014, 0.014, 0.32, 8).rotateX(Math.PI / 2);
+      for (const side of [-1, 1]) {
+        const hinge = new THREE.Group();
+        hinge.position.set(x + side * 0.27, MAG_BOTTOM, 0);
+        hinge.rotation.y = side > 0 ? Math.PI : 0; // both flaps point inward
+        addMesh(flapGeo, MAT.darkSteel, hinge);
+        addMesh(hingeGeo, MAT.chrome, hinge);
+        g.add(hinge);
+        gateFlaps.push(hinge);
+      }
+
+      // hold pins: grip the next can up while the bottom one drops
+      const pinY = SLOT0 + SLOT + 0.3;
+      const pinGeo = new THREE.CylinderGeometry(0.016, 0.016, 0.1, 10).rotateZ(Math.PI / 2);
+      for (const side of [-1, 1]) {
+        addMesh(new THREE.BoxGeometry(0.02, 0.02, 0.54), MAT.darkSteel, g, { x: x + side * 0.29, y: pinY });
+        addMesh(new RoundedBoxGeometry(0.06, 0.07, 0.07, 2, 0.01), MAT.darkSteel, g, { x: x + side * 0.32, y: pinY });
+        const pin = addMesh(pinGeo, MAT.chrome, g, { x: x + side * 0.28, y: pinY });
+        holdPins.push({ mesh: pin, side, x });
       }
 
       // Switch box the chain hangs from, on a bracket off the magazine
@@ -1275,9 +1330,14 @@
         this.xrayTarget = 0;
         this.opacity = 1;
         this.squash = 0;
-        this.dropY = 0;
+        this.dropY = 0;            // height above the belt while dropping out of the magazine
+        this.dropV = 0;
+        this.dropping = false;
+        this.rockX = 0;            // small tilt as it lands and rocks back upright
+        this.rockZ = 0;
+        this.rockVX = 0;
+        this.rockVZ = 0;
         this.state = 'belt';       // 'belt' | 'falling' | 'crating' | 'crated'
-        this.appearing = false;
 
         this.mat = {
           alu: MAT.canAlu.clone(),
@@ -1338,16 +1398,20 @@
       levelWorldY() { return this.body.localToWorld(_v.set(0, this.levelLocal, 0)).y; }
 
       place() {
-        if (this.state === 'belt') this.group.position.set(this.x, SURFACE + this.dropY, 0);
+        if (this.state !== 'belt') return;
+        // while tilted it pivots on its bottom edge, so lift it a touch to keep it out of the belt
+        const lift = CAN.radius * (Math.abs(Math.sin(this.rockX)) + Math.abs(Math.sin(this.rockZ)));
+        this.group.position.set(this.x, SURFACE + this.dropY + lift, 0);
+        this.group.rotation.set(this.rockX, 0, this.rockZ);
       }
 
-      // Drop from height h onto the belt with a little bounce
-      appear(h) {
-        this.appearing = true;
-        this.appearT = 0;
-        this.bounces = 0;
-        this.dropH = h;
+      // Let go from height h (out of the magazine gate): it falls, bounces and rocks
+      release(h) {
+        this.dropping = true;
         this.dropY = h;
+        this.dropV = 0;
+        this.rockVX = rand(-0.3, 0.3);   // a little wobble as it slips off the gate
+        this.rockVZ = rand(-0.5, 0.5);
       }
 
       startFall(speed) {
@@ -1381,18 +1445,32 @@
           if (k >= 1) crate.land(this);
         }
 
-        if (this.appearing) {
-          this.appearT += dt;
-          const k = clamp01(this.appearT / 0.9);
-          this.dropY = this.dropH * (1 - Ease.outBounce(k));
-          const impacts = [1 / 2.75, 2 / 2.75, 2.5 / 2.75];
-          if (this.bounces < impacts.length && k >= impacts[this.bounces]) {
-            Sound.tock(this.bounces === 0 ? 1 : 0.3 / this.bounces);
-            if (this.bounces === 0) this.squash = 0.5;
-            this.bounces++;
+        // Falling out of the magazine: gravity, then a few shrinking bounces on the belt
+        if (this.dropping) {
+          this.dropV -= 12 * dt;
+          this.dropY += this.dropV * dt;
+          if (this.dropY <= 0) {
+            this.dropY = 0;
+            const impact = -this.dropV;
+            if (impact > 0.7) {
+              this.dropV = impact * 0.28;
+              this.squash = Math.min(1, impact / 4);
+              this.rockVX += rand(-1, 1) * impact * 0.18;
+              this.rockVZ += rand(-1, 1) * impact * 0.18;
+              Sound.tock(Math.min(1, impact / 4.5));
+              Sound.ring(Math.min(1, impact / 4.5));
+            } else {
+              this.dropping = false;
+              this.dropV = 0;
+            }
           }
-          if (k >= 1) { this.appearing = false; this.dropY = 0; }
         }
+
+        // Rocking settles back upright like a spring
+        this.rockVX += (-70 * this.rockX - 6 * this.rockVX) * dt;
+        this.rockX += this.rockVX * dt;
+        this.rockVZ += (-70 * this.rockZ - 6 * this.rockVZ) * dt;
+        this.rockZ += this.rockVZ * dt;
 
         this.place();
 
@@ -1833,6 +1911,29 @@
         this.burst(t, 0.03, 0.2 * strength, 'bandpass', 2200, 1.5);
       },
 
+      latch(strength = 1) {           // magazine gate opening / shutting
+        if (!this.ctx) return;
+        const t = this.ctx.currentTime;
+        this.burst(t, 0.018, 0.3 * strength, 'bandpass', 2600, 1.6);
+        this.ping(1750, t, 0.05, 0.07 * strength, 'triangle');
+        this.burst(t + 0.035, 0.015, 0.18 * strength, 'bandpass', 3400, 1.6);
+      },
+
+      ring(strength = 1) {            // hollow aluminium knock
+        if (!this.ctx) return;
+        const t = this.ctx.currentTime;
+        this.ping(1180 * rand(0.95, 1.05), t, 0.12, 0.05 * strength);
+        this.ping(2950 * rand(0.95, 1.05), t, 0.07, 0.025 * strength);
+      },
+
+      chunk() {                       // the stack settling onto the gate
+        if (!this.ctx) return;
+        this.thud(240, 130, 0.14, 0.3);
+        const t = this.ctx.currentTime;
+        this.burst(t, 0.04, 0.22, 'bandpass', 1500, 1.0);
+        this.ping(1050, t, 0.1, 0.04);
+      },
+
       tock(strength = 1) {            // can landing
         if (!this.ctx) return;
         this.thud(520, 320, 0.12, 0.22 * strength);
@@ -1958,12 +2059,78 @@
       moveCans(ds, belt.speed);
     }
 
-    // Chain tug: drop an empty can, if there's room under the magazine
+    // Chain tug: the gate swings open and the bottom can drops onto the belt; the gate
+    // shuts, the hold pins let go, and the stack slides down one can to sit on the gate.
+    const dispenser = {
+      busy: false, t: 0,
+      flap: 0,              // gate: 0 shut .. 1 open
+      pin: 1,               // hold pins: 1 gripping .. 0 pulled back
+      released: false, stackStarted: false, stackFalling: false, stackV: 0, stackHit: false, settledAt: -1,
+    };
+
     function dispense() {
       const x = bayX(ST.DROP);
-      if (cans.some((c) => c.state === 'belt' && Math.abs(c.x - x) < SPACING)) { Sound.clank(0.4); return; }
-      const c = new Can(x);
-      c.appear(MAG_BOTTOM - SURFACE);
+      const blocked = cans.some((c) => c.state === 'belt' && Math.abs(c.x - x) < SPACING);
+      if (dispenser.busy || blocked) { Sound.clank(0.35); return; } // jammed: just a rattle
+      Object.assign(dispenser, {
+        busy: true, t: 0, released: false, stackStarted: false, stackFalling: false, stackV: 0, stackHit: false, settledAt: -1,
+      });
+      Sound.latch();
+    }
+
+    function updateDispenser(dt) {
+      const d = dispenser;
+      let flapTarget = 0, pinTarget = 1;
+      if (d.busy) {
+        d.t += dt;
+        const t = d.t;
+        flapTarget = t < 0.5 ? 1 : 0;
+
+        // 1) the bottom can lets go (a real can takes the place of the stacked one)
+        if (!d.released && t >= 0.06) {
+          d.released = true;
+          magCans[0].visible = false;
+          const c = new Can(bayX(ST.DROP));
+          c.release(SLOT0 - SURFACE);
+        }
+        // 2) gate shuts once the can is clear
+        if (t >= 0.5 && t - dt < 0.5) Sound.latch(0.6);
+        // 3) hold pins pull back, and the stack drops one can-height onto the gate
+        if (t >= 0.62) pinTarget = 0;
+        if (!d.stackStarted && t >= 0.7) {
+          d.stackStarted = true;
+          d.stackFalling = true;
+          d.stackV = 0;
+          magStack.position.y = SLOT;   // every can moves up one slot in the list...
+          magCans[0].visible = true;    // ...so it looks the same, then the whole stack falls
+        }
+        if (d.stackFalling) {
+          d.stackV -= 12 * dt;
+          let y = magStack.position.y + d.stackV * dt;
+          if (y <= 0) {
+            y = 0;
+            const impact = -d.stackV;
+            if (impact > 0.6) {
+              d.stackV = impact * 0.18;
+              if (!d.stackHit) { d.stackHit = true; Sound.chunk(); }
+            } else {
+              d.stackV = 0;
+              d.stackFalling = false;
+              d.settledAt = t;
+            }
+          }
+          magStack.position.y = y;
+        }
+        // 4) pins grip the next can, and it's ready again
+        if (d.settledAt >= 0) {
+          pinTarget = t - d.settledAt > 0.06 ? 1 : 0;
+          if (t - d.settledAt > 0.25) d.busy = false;
+        }
+      }
+      d.flap = damp(d.flap, flapTarget, 28, dt);
+      d.pin = damp(d.pin, pinTarget, 22, dt);
+      for (const hinge of gateFlaps) hinge.rotation.z = -d.flap * 1.62; // swing down past vertical, clear of the can
+      for (const p of holdPins) p.mesh.position.x = p.x + p.side * lerp(0.33, 0.28, d.pin);
     }
 
     // Money in, with a little number where it happened
@@ -2204,7 +2371,7 @@
     endCap.position.x = endCapTarget;
 
     const chain = new PullChain(CHAIN_TOP, 1.4);
-    chain.onTug = () => { Sound.click(); dispense(); };
+    chain.onTug = () => dispense();
 
     /* =====================================================================
        14. SHOP (icons and numbers only)
@@ -2526,6 +2693,7 @@
       endCap.position.x = damp(endCap.position.x, endCapTarget, 3, dt);
 
       chain.update(dt, time);
+      updateDispenser(dt);
       updateBelt(dt);
       updateFiller(dt, time);
       updateCapper(dt);
